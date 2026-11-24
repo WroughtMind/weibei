@@ -44,9 +44,9 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
     }
 
     @MainActor
-    private func opacity(_ view: NSView) -> CGFloat {
-        var result: CGFloat = 1
-        var current: NSView? = view
+    private func opacity(_ view: NSView, drawsWindowButton: Bool = false) -> CGFloat {
+        var result = drawsWindowButton ? CGFloat(view.layer?.opacity ?? Float(view.alphaValue)) : view.alphaValue
+        var current = view.superview
         while let value = current { result *= value.alphaValue; current = value.superview }
         return result
     }
@@ -67,26 +67,34 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
         let windowButtons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
             .compactMap { window.standardWindowButton($0) }
         XCTAssertEqual(windowButtons.count, 3)
-        let controls = views + windowButtons
         XCTAssertNotNil(controller.hoverRegion.superview)
         let readingRect = window.contentLayoutRect
         let frames = views.map { $0.convert($0.bounds, to: nil) }
-        XCTAssertTrue(controls.allSatisfy { opacity($0) < 0.01 })
+        XCTAssertTrue(views.allSatisfy { opacity($0) < 0.01 })
+        XCTAssertTrue(windowButtons.allSatisfy { opacity($0, drawsWindowButton: true) < 0.01 })
+        XCTAssertTrue(windowButtons.allSatisfy { $0.alphaValue > 0.99 },
+                      "The hidden lights still reserve their slots in AppKit layout")
+        let windowButtonsRight = try XCTUnwrap(windowButtons.map { $0.convert($0.bounds, to: nil).maxX }.max())
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(frames.first).minX, windowButtonsRight)
 
         controller.setPointerInside(true)
         let navigation = try XCTUnwrap(views.first)
         XCTAssertTrue(animations(in: navigation).contains { $0.keyPath == "transform.translation.x" })
-        XCTAssertTrue(windowButtons.allSatisfy { opacity($0) < 0.01 }, "Traffic lights wait for the navigation to clear")
+        XCTAssertTrue(windowButtons.allSatisfy { opacity($0, drawsWindowButton: true) < 0.01 },
+                      "Traffic lights wait for the navigation to clear")
         XCTAssertTrue(windowButtons.allSatisfy { $0.layer != nil }, "The first reveal needs a drawable layer before any light becomes visible")
         XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
         try await Task.sleep(for: .milliseconds(300))
-        XCTAssertTrue(controls.allSatisfy { opacity($0) > 0.99 })
+        XCTAssertTrue(views.allSatisfy { opacity($0) > 0.99 })
+        XCTAssertTrue(windowButtons.allSatisfy { opacity($0, drawsWindowButton: true) > 0.99 })
         XCTAssertEqual(window.contentLayoutRect, readingRect)
         XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
 
         controller.setPointerInside(false)
         try await Task.sleep(for: .milliseconds(400))
-        XCTAssertTrue(controls.allSatisfy { opacity($0) < 0.01 }, "Settings and window controls must follow the same hide rule")
+        XCTAssertTrue(views.allSatisfy { opacity($0) < 0.01 })
+        XCTAssertTrue(windowButtons.allSatisfy { opacity($0, drawsWindowButton: true) < 0.01 },
+                      "Settings and window controls must follow the same hide rule")
         XCTAssertTrue(toolbar.isVisible, "Hiding the native toolbar would change the safe area")
         XCTAssertEqual(window.contentLayoutRect, readingRect)
         XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
@@ -107,7 +115,7 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
         let fade = try XCTUnwrap(animations(in: close).first { $0.keyPath == "opacity" })
         XCTAssertEqual(fade.fromValue as? Float, 0)
         XCTAssertEqual(fade.toValue as? Float, 1)
-        XCTAssertGreaterThan(opacity(close), 0.99, "The native hit target is ready during its fade")
+        XCTAssertGreaterThan(opacity(close, drawsWindowButton: true), 0.99)
     }
 
     @MainActor

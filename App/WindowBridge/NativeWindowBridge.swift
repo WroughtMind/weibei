@@ -181,9 +181,9 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
               let toolbar = toolbar as? NSToolbar,
               let controller = toolbarAutoHide.object(forKey: toolbar),
               let window = NSApp.windows.first(where: { $0.toolbar === toolbar }) else { return [:] }
-        func opacity(_ view: NSView) -> CGFloat {
-            var value: CGFloat = 1
-            var current: NSView? = view
+        func opacity(_ view: NSView, drawsWindowButton: Bool = false) -> CGFloat {
+            var value = drawsWindowButton ? CGFloat(view.layer?.opacity ?? Float(view.alphaValue)) : view.alphaValue
+            var current = view.superview
             while let item = current { value *= item.alphaValue; current = item.superview }
             return value
         }
@@ -194,8 +194,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
                      "controls_visible": String(controller.controlsVisible),
                      "hover_attached": String(controller.hoverRegion.window != nil),
                      "content_layout_rect": NSStringFromRect(window.contentLayoutRect),
-                     "window_buttons_hidden": String(windowButtons.count == 3 && windowButtons.allSatisfy { opacity($0) < 0.01 }),
-                     "window_buttons_shown": String(windowButtons.count == 3 && windowButtons.allSatisfy { opacity($0) > 0.99 }),
+                     "window_buttons_hidden": String(windowButtons.count == 3 && windowButtons.allSatisfy { opacity($0, drawsWindowButton: true) < 0.01 }),
+                     "window_buttons_shown": String(windowButtons.count == 3 && windowButtons.allSatisfy { opacity($0, drawsWindowButton: true) > 0.99 }),
                      "all_hidden": String(views.count == 3 && views.allSatisfy { opacity($0) < 0.01 }),
                      "all_shown": String(views.count == 3 && views.allSatisfy { opacity($0) > 0.99 })]
         for item in toolbar.items {

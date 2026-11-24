@@ -190,7 +190,7 @@ final class WorkspaceToolbarAutoHide {
             let item = Presentation(view: view, alpha: view.alphaValue,
                                     isWindowButton: isWindowButton, installedLayer: installedLayer)
             if installedLayer { view.wantsLayer = true }
-            view.alphaValue = controlsVisible && !(isWindowButton && delayingWindowButtons) ? item.alpha : 0
+            applyOpacity(controlsVisible && !(isWindowButton && delayingWindowButtons) ? item.alpha : 0, to: item)
             return item
         }
     }
@@ -202,7 +202,7 @@ final class WorkspaceToolbarAutoHide {
         guard animated else {
             for item in presentations {
                 item.view?.layer?.removeAnimation(forKey: Self.opacityAnimation)
-                item.view?.alphaValue = visible ? item.alpha : 0
+                applyOpacity(visible ? item.alpha : 0, to: item)
             }
             return
         }
@@ -249,10 +249,9 @@ final class WorkspaceToolbarAutoHide {
         for item in items {
             guard let view = item.view else { continue }
             let target = visible ? item.alpha : 0
-            let current = view.layer?.presentation()?.opacity ?? Float(view.alphaValue)
-            // Publish the hit-test state immediately and animate from the
-            // rendered opacity so reversing direction doesn't flash.
-            view.alphaValue = target
+            let current = view.layer?.presentation()?.opacity
+                ?? (item.isWindowButton ? view.layer?.opacity : nil) ?? Float(view.alphaValue)
+            applyOpacity(target, to: item)
             guard let layer = view.layer else { continue }
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = current
@@ -264,10 +263,24 @@ final class WorkspaceToolbarAutoHide {
         CATransaction.commit()
     }
 
+    private func applyOpacity(_ alpha: CGFloat, to item: Presentation) {
+        guard let view = item.view else { return }
+        if item.isWindowButton {
+            // AppKit uses the standard buttons' view alpha to reserve its
+            // leading space. Keep the slots in layout throughout the fade.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            view.layer?.opacity = Float(alpha)
+            CATransaction.commit()
+        } else {
+            view.alphaValue = alpha
+        }
+    }
+
     private func restore(_ item: Presentation) {
         guard let view = item.view else { return }
         view.layer?.removeAnimation(forKey: Self.opacityAnimation)
-        view.alphaValue = item.alpha
+        applyOpacity(item.alpha, to: item)
         if item.installedLayer { view.wantsLayer = false }
     }
 
