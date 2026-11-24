@@ -8,6 +8,7 @@ struct ContextualContentPicker: View {
     @State private var courseEntry: CourseProjectEntryPresentation?
     @State private var search = ""
     @State private var searchFocused = false
+    @State private var searchFocusRequest = 0
 
     private struct Group: Identifiable {
         let course: Course?
@@ -39,6 +40,8 @@ struct ContextualContentPicker: View {
     var body: some View {
         GeometryReader { geometry in
             let groups = groups
+            let filtering = !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let libraryEmpty = !filtering && groups.allSatisfy { $0.items.isEmpty }
             let available = max(1, geometry.size.width - 40)
             let columns = max(1, min(store.courses.count + 1, Int((min(available, 1140) + 16) / 200)))
             let width = min(available, CGFloat(columns) * 220 + CGFloat(columns - 1) * 16)
@@ -53,6 +56,7 @@ struct ContextualContentPicker: View {
                             prompt: store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags"),
                             isFocused: $searchFocused,
                             fontSize: 12,
+                            focusRequest: searchFocusRequest,
                             focusesOnAppear: kind == .note && store.notePickerPresented,
                             drawsChrome: false,
                             chromeHeight: 28
@@ -63,13 +67,43 @@ struct ContextualContentPicker: View {
                     .background(WeiBeiTheme.paperInset.opacity(0.22), in: RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius))
                     .accessibilityIdentifier("contextual-content-filter")
                     globalActions
-                    if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && groups.allSatisfy({ $0.items.isEmpty }) {
-                        Text(store.ui("没有匹配的内容", "No matching content"))
-                            .weiBeiText(13).foregroundStyle(WeiBeiTheme.secondaryInk)
-                    }
-                    CoursePickerColumns(columns: columns, spacing: 16) {
-                        ForEach(groups) { group in
-                            courseBlock(group)
+                    if filtering && groups.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(kind == .note
+                                 ? store.ui("没有找到匹配的笔记", "No matching notes")
+                                 : store.ui("没有找到匹配的文稿", "No matching documents"))
+                                .weiBeiText(13).foregroundStyle(WeiBeiTheme.secondaryInk)
+                            Button(store.ui("清除搜索", "Clear Search")) {
+                                search = ""
+                                searchFocusRequest += 1
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
+                            .accessibilityIdentifier("contextual-picker-clear-search")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        if libraryEmpty {
+                            HStack(spacing: 8) {
+                                Image(systemName: kind == .note ? "note.text" : "doc.text")
+                                    .accessibilityHidden(true)
+                                Text(kind == .note
+                                     ? store.ui("还没有笔记", "No notes yet")
+                                     : store.ui("还没有可阅读的文稿", "No documents to read yet"))
+                                    .weiBeiText(13)
+                                if kind == .note {
+                                    Button(store.ui("新建笔记", "New Note")) {
+                                        store.createBlankNotebookNote(in: nil)
+                                    }
+                                    .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
+                                }
+                            }
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        CoursePickerColumns(columns: columns, spacing: 16) {
+                            ForEach(groups) { group in
+                                courseBlock(group, showsEmptyMessage: !libraryEmpty)
+                            }
                         }
                     }
                 }
@@ -98,7 +132,7 @@ struct ContextualContentPicker: View {
         kind == .note ? store.ui("通用笔记", "Common Notes") : store.ui("通用资料", "Common Materials")
     }
 
-    private func courseBlock(_ group: Group) -> some View {
+    private func courseBlock(_ group: Group, showsEmptyMessage: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(group.course?.title ?? commonTitle)
@@ -131,7 +165,7 @@ struct ContextualContentPicker: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(WeiBeiTheme.accent)
             }
-            if group.items.isEmpty {
+            if showsEmptyMessage && group.items.isEmpty {
                 Text(kind == .note ? store.ui("还没有笔记", "No notes yet") : store.ui("还没有资料", "No materials yet"))
                     .weiBeiText(12).foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
