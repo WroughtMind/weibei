@@ -235,8 +235,12 @@ struct CourseSidebarList: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(width: 11)
-                Image(systemName: "book.closed")
-                    .font(.system(size: 13))
+                Image("sidebar-book", bundle: WeiBeiResources.bundle)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
                     .foregroundStyle([WeiBeiTheme.accent, WeiBeiTheme.moss, WeiBeiTheme.link, WeiBeiTheme.secondaryInk][((course.colorIndex % 4) + 4) % 4])
                     .frame(width: 15)
                 Text(course.title)
@@ -486,7 +490,12 @@ private struct LibraryRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: isNote ? "square.and.pencil" : "doc.text")
+            Image(isNote ? "sidebar-note" : "sidebar-document", bundle: WeiBeiResources.bundle)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 16, height: 16)
+                .accessibilityHidden(true)
                 .foregroundStyle(selected ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 2) {
