@@ -608,6 +608,7 @@ enum CatalystBusinessCheck {
                         let state = CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)
                         result[name + "_latest_state"] = state
                         return state[inside ? "all_shown" : "all_hidden"] == "true"
+                            && state[inside ? "window_buttons_shown" : "window_buttons_hidden"] == "true"
                             && state["toolbar_visible"] == "true" && state["hover_attached"] == "true"
                     }
                 }

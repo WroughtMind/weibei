@@ -9,7 +9,7 @@ import Foundation
     func setCursor(_ name: String)
     func open(_ url: URL) -> Bool
     func reveal(_ url: URL)
-    @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject)
+    @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject, reduceMotion: Bool)
     @MainActor func unregisterWorkspaceToolbar(toolbar: NSObject)
     @MainActor func presentUpdateNotes(contentItem: NSObject, anchor: NSObject,
                                       sourceRect: CGRect, size: CGSize, dark: Bool,

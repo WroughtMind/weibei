@@ -52,24 +52,32 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
     }
 
     @MainActor
+    private func animations(in view: NSView) -> [CABasicAnimation] {
+        guard let layer = view.layer else { return [] }
+        return (layer.animationKeys() ?? []).compactMap { layer.animation(forKey: $0) as? CABasicAnimation }
+    }
+
+    @MainActor
     func testAllControlsHideTogetherWithoutMovingReadingArea() async throws {
         let items = ToolbarItems()
         let (window, toolbar, controller) = makeWindow(items)
         defer { controller.detach(); window.close() }
         let views = toolbar.items.compactMap(\.view)
         XCTAssertEqual(views.count, 3)
-        let controls = views + [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+        let windowButtons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
             .compactMap { window.standardWindowButton($0) }
+        XCTAssertEqual(windowButtons.count, 3)
+        let controls = views + windowButtons
         XCTAssertNotNil(controller.hoverRegion.superview)
         let readingRect = window.contentLayoutRect
         let frames = views.map { $0.convert($0.bounds, to: nil) }
         XCTAssertTrue(controls.allSatisfy { opacity($0) < 0.01 })
 
         controller.setPointerInside(true)
-        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let close = try XCTUnwrap(window.standardWindowButton(.closeButton))
-            XCTAssertLessThan(opacity(close), 0.01, "Traffic lights enter after the navigation starts moving")
-        }
+        let navigation = try XCTUnwrap(views.first)
+        XCTAssertTrue(animations(in: navigation).contains { $0.keyPath == "transform.translation.x" })
+        XCTAssertTrue(windowButtons.allSatisfy { opacity($0) < 0.01 }, "Traffic lights wait for the navigation to clear")
+        XCTAssertTrue(windowButtons.allSatisfy { $0.layer != nil }, "The first reveal needs a drawable layer before any light becomes visible")
         XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertTrue(controls.allSatisfy { opacity($0) > 0.99 })
@@ -82,6 +90,24 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
         XCTAssertTrue(toolbar.isVisible, "Hiding the native toolbar would change the safe area")
         XCTAssertEqual(window.contentLayoutRect, readingRect)
         XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
+    }
+
+    @MainActor
+    func testReducingMotionDuringRevealFadesNativeButtonsInPlace() throws {
+        let items = ToolbarItems()
+        let (window, toolbar, controller) = makeWindow(items)
+        defer { controller.detach(); window.close() }
+        let navigation = try XCTUnwrap(toolbar.items.first?.view)
+        let close = try XCTUnwrap(window.standardWindowButton(.closeButton))
+
+        controller.setPointerInside(true)
+        controller.reduceMotion = true
+
+        XCTAssertFalse(animations(in: navigation).contains { $0.keyPath == "transform.translation.x" })
+        let fade = try XCTUnwrap(animations(in: close).first { $0.keyPath == "opacity" })
+        XCTAssertEqual(fade.fromValue as? Float, 0)
+        XCTAssertEqual(fade.toValue as? Float, 1)
+        XCTAssertGreaterThan(opacity(close), 0.99, "The native hit target is ready during its fade")
     }
 
     @MainActor

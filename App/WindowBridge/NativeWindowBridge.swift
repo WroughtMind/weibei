@@ -188,10 +188,14 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
             return value
         }
         let views = toolbar.items.compactMap(\.view)
+        let windowButtons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+            .compactMap { window.standardWindowButton($0) }
         var state = ["toolbar_visible": String(toolbar.isVisible),
                      "controls_visible": String(controller.controlsVisible),
                      "hover_attached": String(controller.hoverRegion.window != nil),
                      "content_layout_rect": NSStringFromRect(window.contentLayoutRect),
+                     "window_buttons_hidden": String(windowButtons.count == 3 && windowButtons.allSatisfy { opacity($0) < 0.01 }),
+                     "window_buttons_shown": String(windowButtons.count == 3 && windowButtons.allSatisfy { opacity($0) > 0.99 }),
                      "all_hidden": String(views.count == 3 && views.allSatisfy { opacity($0) < 0.01 }),
                      "all_shown": String(views.count == 3 && views.allSatisfy { opacity($0) > 0.99 })]
         for item in toolbar.items {
@@ -525,11 +529,13 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     @MainActor func unregisterFileDrop(id: String) {
         fileDrops.removeValue(forKey: id)?.detach()
     }
-    @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject) {
+    @MainActor func setWorkspaceToolbarVisible(_ visible: Bool, toolbar: NSObject, reduceMotion: Bool) {
         guard let toolbar = toolbar as? NSToolbar else { return }
         toolbarVisibility.setObject(NSNumber(value: visible), forKey: toolbar)
-        if toolbarAutoHide.object(forKey: toolbar) == nil {
-            toolbarAutoHide.setObject(WorkspaceToolbarAutoHide(toolbar: toolbar), forKey: toolbar)
+        if let controller = toolbarAutoHide.object(forKey: toolbar) {
+            controller.reduceMotion = reduceMotion
+        } else {
+            toolbarAutoHide.setObject(WorkspaceToolbarAutoHide(toolbar: toolbar, reduceMotion: reduceMotion), forKey: toolbar)
         }
         updateFileDrops()
     }

@@ -18,6 +18,7 @@ import WeiBeiCore
 /// Native toolbar items own their hit regions; drawing controls under a hidden
 /// titlebar leaves AppKit's window double-click handling over those controls.
 struct CatalystTopBar: UIViewControllerRepresentable {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     let leading: AnyView
     let center: AnyView
     let trailing: AnyView
@@ -28,7 +29,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {
         controller.update([leading, center, trailing], menus: overflowMenus,
-                          isVisible: isVisible, isFullScreen: isFullScreen)
+                          isVisible: isVisible, isFullScreen: isFullScreen, reduceMotion: reduceMotion)
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
         controller.tearDown()
@@ -43,6 +44,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         private weak var scene: UIWindowScene?
         private var showsToolbar = true
         private var isFullScreen = false
+        private var reduceMotion = false
 
         override func loadView() {
             let probe = Probe()
@@ -54,7 +56,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             toolbar.centeredItemIdentifiers = [identifiers[1]]
         }
 
-        func update(_ contents: [AnyView], menus: [UIMenu], isVisible: Bool, isFullScreen: Bool) {
+        func update(_ contents: [AnyView], menus: [UIMenu], isVisible: Bool, isFullScreen: Bool, reduceMotion: Bool) {
             loadViewIfNeeded()
             self.menus = menus
             self.contents = contents
@@ -66,6 +68,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             }
             showsToolbar = isVisible
             self.isFullScreen = isFullScreen
+            self.reduceMotion = reduceMotion
             attach()
         }
 
@@ -85,7 +88,8 @@ struct CatalystTopBar: UIViewControllerRepresentable {
                     toolbar.insertItem(withItemIdentifier: identifier, at: index)
                 }
             }
-            CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(showsToolbar, toolbar: toolbar)
+            CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(showsToolbar, toolbar: toolbar,
+                                                                   reduceMotion: reduceMotion)
         }
 
         func detach() {
@@ -245,6 +249,7 @@ struct CatalystFullScreenToolbar: View {
         .overlay { center }
         .frame(height: height)
         .opacity(visible ? 1 : 0)
+        .weiBeiFadeWhenReducingMotion(visible)
         .allowsHitTesting(visible)
         .background {
             HoverPassThroughRegion(topEdgeInset: 4, identifier: "fullscreen-toolbar-hover") { hovering = $0 }

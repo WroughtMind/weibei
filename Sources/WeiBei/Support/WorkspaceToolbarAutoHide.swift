@@ -23,20 +23,30 @@ final class WorkspaceToolbarAutoHide {
     private var pointerInside = false
     private var keyboardFocused = false
     private(set) var controlsVisible = false
+    var reduceMotion: Bool {
+        didSet {
+            guard reduceMotion, !oldValue, revealTask != nil else { return }
+            let buttonsAreWaiting = delayingWindowButtons
+            cancelReveal()
+            if buttonsAreWaiting { fade(presentations.filter(\.isWindowButton), visible: true) }
+        }
+    }
     private static let opacityAnimation = "weibei.toolbar-opacity"
 
     private struct Presentation {
         weak var view: NSView?
         let alpha: CGFloat
         let isWindowButton: Bool
+        let installedLayer: Bool
     }
 
     private struct WeakView {
         weak var view: NSView?
     }
 
-    init(toolbar: NSToolbar) {
+    init(toolbar: NSToolbar, reduceMotion: Bool = false) {
         self.toolbar = toolbar
+        self.reduceMotion = reduceMotion
         hoverRegion.onHoverChange = { [weak self] inside in self?.setPointerInside(inside) }
     }
 
@@ -45,10 +55,13 @@ final class WorkspaceToolbarAutoHide {
             detach()
             return
         }
-        self.window = window
         let items = toolbar.items.compactMap(\.view).filter { $0.window != nil }
         guard let host = items.first?.window,
-              let root = host.contentView?.superview else { return }
+              let root = host.contentView?.superview else {
+            detach()
+            return
+        }
+        self.window = window
         let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
             .compactMap { window.standardWindowButton($0) }
             .filter { $0.window === host }
@@ -86,7 +99,7 @@ final class WorkspaceToolbarAutoHide {
             cancelReveal()
             navigationView = nextNavigation
             if wasDelaying {
-                for item in presentations where item.isWindowButton { snapOpacity(of: item, to: item.alpha) }
+                fade(presentations.filter(\.isWindowButton), visible: true)
             }
         }
         if let navigation = nextNavigation, let firstButton = buttons.first {
@@ -108,14 +121,14 @@ final class WorkspaceToolbarAutoHide {
                         let point = self.hoverRegion.convert(host.convertPoint(fromScreen: screenPoint), from: nil)
                         let inside = self.hoverRegion.bounds.contains(point)
                         self.setPointerInside(inside)
-                        if inside && (event.type == .leftMouseDown || event.type == .rightMouseDown) {
+                        if inside && self.delayingWindowButtons
+                            && (event.type == .leftMouseDown || event.type == .rightMouseDown) {
                             // A click where the sliding capsule just was must
                             // not activate a window button that has yet to appear.
-                            if self.delayingWindowButtons && self.presentations.contains(where: {
+                            if self.presentations.contains(where: {
                                 guard $0.isWindowButton, let view = $0.view else { return false }
                                 return view.bounds.contains(view.convert(host.convertPoint(fromScreen: screenPoint), from: nil))
                             }) { return nil }
-                            self.setVisible(true, animated: false)
                         }
                     }
                     return event
@@ -166,12 +179,17 @@ final class WorkspaceToolbarAutoHide {
 
     private func replaceControls(_ controls: [NSView], windowButtons: [NSView]) {
         for item in presentations where !controls.contains(where: { $0 === item.view }) {
-            snapOpacity(of: item, to: item.alpha)
+            restore(item)
         }
         presentations = controls.map { view in
             if let existing = presentations.first(where: { $0.view === view }) { return existing }
             let isWindowButton = windowButtons.contains { $0 === view }
-            let item = Presentation(view: view, alpha: view.alphaValue, isWindowButton: isWindowButton)
+            // AppKit can create a traffic light's first layer when alpha is
+            // set to 1. Install it beforehand so the first reveal can animate.
+            let installedLayer = view.layer == nil && !view.wantsLayer
+            let item = Presentation(view: view, alpha: view.alphaValue,
+                                    isWindowButton: isWindowButton, installedLayer: installedLayer)
+            if installedLayer { view.wantsLayer = true }
             view.alphaValue = controlsVisible && !(isWindowButton && delayingWindowButtons) ? item.alpha : 0
             return item
         }
@@ -181,62 +199,76 @@ final class WorkspaceToolbarAutoHide {
         guard controlsVisible != visible || !animated else { return }
         controlsVisible = visible
         cancelReveal()
-        let animate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        guard animate else {
-            for item in presentations { snapOpacity(of: item, to: visible ? item.alpha : 0) }
+        guard animated else {
+            for item in presentations {
+                item.view?.layer?.removeAnimation(forKey: Self.opacityAnimation)
+                item.view?.alphaValue = visible ? item.alpha : 0
+            }
             return
         }
 
         if !visible {
-            fadingOutUntil = CACurrentMediaTime() + WeiBeiMotionTokens.durationControl
-            fade(presentations, visible: false, curve: WeiBeiMotionTokens.easeIn)
+            fadingOutUntil = CACurrentMediaTime() + fadeDuration
+            fade(presentations, visible: false)
             return
         }
 
         // Reversing a fade-out keeps the capsule at its existing position.
-        guard CACurrentMediaTime() >= fadingOutUntil, beginNavigationSlide() else {
-            fade(presentations, visible: true, curve: WeiBeiMotionTokens.easeOut)
+        guard !reduceMotion, CACurrentMediaTime() >= fadingOutUntil, beginNavigationSlide() else {
+            fade(presentations, visible: true)
             return
         }
         delayingWindowButtons = true
-        fade(presentations.filter { !$0.isWindowButton }, visible: true, curve: WeiBeiMotionTokens.easeOut)
+        fade(presentations.filter { !$0.isWindowButton }, visible: true)
+        // Start the lights near the end of the navigation's deceleration.
+        // The stagger and fade fit within one small entrance.
+        let delay = WeiBeiMotionTokens.durationSm - fadeDuration
         revealTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(85))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             self.delayingWindowButtons = false
-            self.fade(self.presentations.filter(\.isWindowButton), visible: true, curve: WeiBeiMotionTokens.easeOut)
-            try? await Task.sleep(for: .milliseconds(85))
+            self.fade(self.presentations.filter(\.isWindowButton), visible: true)
+            try? await Task.sleep(for: .seconds(WeiBeiMotionTokens.durationSmExit - delay))
             guard !Task.isCancelled else { return }
             self.cancelReveal()
         }
     }
 
-    private func fade(_ items: [Presentation], visible: Bool, curve: WeiBeiMotionTokens.Cubic) {
+    private var fadeDuration: TimeInterval {
+        reduceMotion ? WeiBeiMotionTokens.durationSmExit : WeiBeiMotionTokens.durationControl
+    }
+
+    private func fade(_ items: [Presentation], visible: Bool) {
+        let curve = visible || reduceMotion ? WeiBeiMotionTokens.easeOut : WeiBeiMotionTokens.easeIn
+        let timing = CAMediaTimingFunction(
+            controlPoints: Float(curve.x1), Float(curve.y1), Float(curve.x2), Float(curve.y2)
+        )
+        let duration = fadeDuration
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for item in items {
             guard let view = item.view else { continue }
-            let layer = view.layer
-            let current = layer?.presentation()?.opacity ?? Float(view.alphaValue)
             let target = visible ? item.alpha : 0
+            let current = view.layer?.presentation()?.opacity ?? Float(view.alphaValue)
+            // Publish the hit-test state immediately and animate from the
+            // rendered opacity so reversing direction doesn't flash.
             view.alphaValue = target
-            guard let layer else { continue }
-
+            guard let layer = view.layer else { continue }
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = current
-            fade.toValue = layer.opacity
-            fade.duration = WeiBeiMotionTokens.durationControl
-            fade.timingFunction = CAMediaTimingFunction(
-                controlPoints: Float(curve.x1), Float(curve.y1), Float(curve.x2), Float(curve.y2)
-            )
+            fade.toValue = Float(target)
+            fade.duration = duration
+            fade.timingFunction = timing
             layer.add(fade, forKey: Self.opacityAnimation)
         }
         CATransaction.commit()
     }
 
-    private func snapOpacity(of item: Presentation, to alpha: CGFloat) {
-        item.view?.layer?.removeAnimation(forKey: Self.opacityAnimation)
-        item.view?.alphaValue = alpha
+    private func restore(_ item: Presentation) {
+        guard let view = item.view else { return }
+        view.layer?.removeAnimation(forKey: Self.opacityAnimation)
+        view.alphaValue = item.alpha
+        if item.installedLayer { view.wantsLayer = false }
     }
 
     private func beginNavigationSlide() -> Bool {
@@ -286,7 +318,7 @@ final class WorkspaceToolbarAutoHide {
         if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
         inputMonitor = nil
         hoverRegion.removeFromSuperview()
-        for item in presentations { snapOpacity(of: item, to: item.alpha) }
+        for item in presentations { restore(item) }
         presentations.removeAll()
         pointerInside = false
         keyboardFocused = false
