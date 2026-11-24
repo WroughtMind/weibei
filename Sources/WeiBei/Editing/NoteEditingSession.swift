@@ -9,7 +9,7 @@ enum NoteSaveStatus: Equatable {
     case failed
     case externallyModified
 
-    /// 失败和冲突立刻显示。`.saving` 本身不占标题栏，持续过久才由会话单独亮出。
+    /// 后台保存保持安静，标题栏只显示已发生的失败或冲突。
     var showsStatusLabel: Bool {
         self == .failed || self == .externallyModified
     }
@@ -45,8 +45,6 @@ final class NoteEditingSession: ObservableObject {
     private let idleSnapshotDelay: Duration
     private let maximumSnapshotAge: Duration
     private let snapshotTimeout: Duration
-    private let savingLabelDelay: Duration
-    private var savingLabelTask: Task<Void, Never>?
 
     private(set) var documentID: String
     private(set) var documentGeneration: UInt64
@@ -54,8 +52,6 @@ final class NoteEditingSession: ObservableObject {
     private(set) var savedRevision: UInt64
     private(set) var dirty = false
     @Published private(set) var saveStatus: NoteSaveStatus = .idle
-    /// 「保存中」持续超过 `savingLabelDelay` 才为真；失败和冲突不走这条延迟。
-    @Published private(set) var showsProlongedSavingLabel = false
 
     init(
         documentID: String,
@@ -63,7 +59,6 @@ final class NoteEditingSession: ObservableObject {
         idleSnapshotDelay: Duration = .milliseconds(850),
         maximumSnapshotAge: Duration = .seconds(5),
         snapshotTimeout: Duration = .seconds(5),
-        savingLabelDelay: Duration = .seconds(2),
         onSnapshotRequest: ((NoteEditorSnapshotRequest) -> Void)? = nil,
         onSnapshotAccepted: @escaping (NoteEditorSnapshotReadyEvent) -> Void = { _ in }
     ) {
@@ -74,7 +69,6 @@ final class NoteEditingSession: ObservableObject {
         self.idleSnapshotDelay = idleSnapshotDelay
         self.maximumSnapshotAge = maximumSnapshotAge
         self.snapshotTimeout = snapshotTimeout
-        self.savingLabelDelay = savingLabelDelay
         self.onSnapshotRequest = onSnapshotRequest
         snapshotRequestHandlerToken = onSnapshotRequest == nil ? nil : UUID()
         self.onSnapshotAccepted = onSnapshotAccepted
@@ -168,24 +162,22 @@ final class NoteEditingSession: ObservableObject {
         }
 
         let requiredRevision = max(minimumRevision ?? currentRevision, currentRevision)
-        if var pendingSnapshot {
-            pendingSnapshot.minimumRevision = max(
-                pendingSnapshot.minimumRevision,
-                requiredRevision
-            )
-            pendingSnapshot.persists = pendingSnapshot.persists || persists
-            if let completion {
-                pendingSnapshot.completions.append(completion)
-            }
-            self.pendingSnapshot = pendingSnapshot
-            return true
-        }
-
-        return issueSnapshotRequest(
+        var pending = pendingSnapshot ?? PendingSnapshot(
+            requestID: UUID().uuidString,
             minimumRevision: requiredRevision,
             persists: persists,
-            completions: completion.map { [$0] } ?? []
+            completions: []
         )
+        pending.minimumRevision = max(pending.minimumRevision, requiredRevision)
+        pending.persists = pending.persists || persists
+        if let completion {
+            pending.completions.append(completion)
+        }
+        pendingSnapshot = pending
+        if snapshotTimeoutTask == nil {
+            sendSnapshotRequest(pending)
+        }
+        return true
     }
 
     func snapshot(
@@ -205,31 +197,29 @@ final class NoteEditingSession: ObservableObject {
             protocolVersion: event.protocolVersion,
             documentID: event.documentID,
             documentGeneration: event.documentGeneration
-        ), let pendingSnapshot,
-           pendingSnapshot.requestID == event.requestID else {
+        ), var pending = pendingSnapshot,
+           pending.requestID == event.requestID else {
             return false
         }
 
-        guard event.revision >= pendingSnapshot.minimumRevision else {
-            self.pendingSnapshot = nil
-            _ = issueSnapshotRequest(
-                minimumRevision: pendingSnapshot.minimumRevision,
-                persists: pendingSnapshot.persists,
-                completions: pendingSnapshot.completions
-            )
+        let requiredRevision = max(pending.minimumRevision, currentRevision)
+        guard event.revision >= requiredRevision else {
+            pending.minimumRevision = requiredRevision
+            pendingSnapshot = pending
+            sendSnapshotRequest(pending)
             return false
         }
 
-        self.pendingSnapshot = nil
+        pendingSnapshot = nil
         snapshotTimeoutTask?.cancel()
         snapshotTimeoutTask = nil
-        if pendingSnapshot.persists {
+        if pending.persists {
             cancelScheduledSnapshots()
-            currentRevision = max(currentRevision, event.revision)
+            currentRevision = event.revision
             dirty = dirty || currentRevision != savedRevision
             onSnapshotAccepted(event)
         }
-        pendingSnapshot.completions.forEach { $0(.success(event)) }
+        pending.completions.forEach { $0(.success(event)) }
         return true
     }
 
@@ -253,67 +243,36 @@ final class NoteEditingSession: ObservableObject {
     }
 
     private func adoptSaveStatus(_ status: NoteSaveStatus) {
-        let wasSaving = saveStatus == .saving
+        guard saveStatus != status else { return }
         saveStatus = status
-        guard status == .saving else {
-            cancelSavingLabel()
-            return
-        }
-        guard !wasSaving else { return }
-        showsProlongedSavingLabel = false
-        let delay = savingLabelDelay
-        savingLabelTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: delay)
-            guard let self, !Task.isCancelled, saveStatus == .saving else { return }
-            showsProlongedSavingLabel = true
-        }
     }
 
-    private func cancelSavingLabel() {
-        savingLabelTask?.cancel()
-        savingLabelTask = nil
-        if showsProlongedSavingLabel {
-            showsProlongedSavingLabel = false
+    private func sendSnapshotRequest(_ pending: PendingSnapshot) {
+        let requestID = pending.requestID
+        if snapshotTimeoutTask == nil {
+            let timeout = snapshotTimeout
+            snapshotTimeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self, !Task.isCancelled, var pending = pendingSnapshot,
+                      pending.requestID == requestID else { return }
+                snapshotTimeoutTask = nil
+                let completions = pending.completions
+                pending.completions.removeAll()
+                // Keep a late reply eligible for saving after its callers stop waiting.
+                pendingSnapshot = pending.persists ? pending : nil
+                completions.forEach { $0(.failure(.snapshotTimedOut)) }
+            }
         }
-    }
-
-    @discardableResult
-    private func issueSnapshotRequest(
-        minimumRevision: UInt64,
-        persists: Bool,
-        completions: [SnapshotCompletion]
-    ) -> Bool {
-        guard let onSnapshotRequest else {
-            completions.forEach { $0(.failure(.bridgeUnavailable)) }
-            return false
-        }
-
-        let requestID = UUID().uuidString
-        pendingSnapshot = PendingSnapshot(
-            requestID: requestID,
-            minimumRevision: minimumRevision,
-            persists: persists,
-            completions: completions
-        )
-        snapshotTimeoutTask?.cancel()
-        snapshotTimeoutTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: snapshotTimeout)
-            guard !Task.isCancelled,
-                  pendingSnapshot?.requestID == requestID else { return }
-            failPendingSnapshot(with: .snapshotTimedOut)
-        }
-        onSnapshotRequest(
+        onSnapshotRequest?(
             NoteEditorSnapshotRequest(
                 requestID: requestID,
                 documentID: documentID,
                 documentGeneration: documentGeneration,
-                minimumRevision: minimumRevision,
+                minimumRevision: pending.minimumRevision,
                 type: .requestSnapshot,
                 payload: NoteEditorEmptyPayload()
             )
         )
-        return true
     }
 
     private func failPendingSnapshot(with error: NoteEditingSessionError) {

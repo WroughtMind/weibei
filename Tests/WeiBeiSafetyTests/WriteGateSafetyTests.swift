@@ -428,6 +428,28 @@ final class WriteGateSafetyTests: XCTestCase {
         XCTAssertTrue(store.noteText.contains("磁盘上的新内容"))
     }
 
+    func testUnchangedCourseNoteStaysVisibleOnForeground() throws {
+        let base = makeTempRoot("weibei-note-foreground")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = try makeStore(
+            base: base,
+            library: base.appendingPathComponent("资料库"),
+            backupRoot: base.appendingPathComponent("backups")
+        )
+        let courseID = try store.createCourseInLibrary(title: "写作课")
+        let markdown = "# 课程笔记\n\n读到这里。\n"
+        let note = try importNote(store, base: base, courseID: courseID, content: markdown)
+        XCTAssertTrue(store.openCourseNote(note.item.id, in: courseID))
+        waitForCourseNoteLoad(store, itemID: note.item.id)
+        store.noteEditingSession.replaceDocument(with: note.item.id)
+
+        try store.waitForCourseFileOperation {
+            await store.reconcileActiveNoteEditorWithBackingFile()
+            XCTAssertFalse(store.activeNoteIsLoading)
+            XCTAssertEqual(store.noteText, markdown)
+        }
+    }
+
     func testAtomicExternalEditAdoptsDiskAfterSwitchingAwayAndBack() throws {
         let base = makeTempRoot("weibei-external-adopt-after-switch")
         defer { try? FileManager.default.removeItem(at: base) }

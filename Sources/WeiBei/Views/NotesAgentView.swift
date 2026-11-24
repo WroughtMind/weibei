@@ -815,33 +815,18 @@ private struct NoteSaveStatusLabel: View {
         if let title {
             Text(title)
                 .weiBeiText(10.5, weight: .medium)
-                .foregroundStyle(
-                    store.activeNoteSaveStatus == .failed
-                        || store.activeNoteSaveStatus == .externallyModified
-                        ? WeiBeiTheme.failure
-                        : WeiBeiTheme.secondaryInk
-                )
+                .foregroundStyle(WeiBeiTheme.failure)
                 .lineLimit(1)
                 .accessibilityLabel(Text(title))
         }
     }
 
     private var title: String? {
-        if store.activeNoteSaveStatus == .saving {
-            guard session.showsProlongedSavingLabel else { return nil }
-            return store.ui("保存中", "Saving")
-        }
-        guard store.activeNoteSaveStatus.showsStatusLabel else { return nil }
-        switch store.activeNoteSaveStatus {
-        case .saving:
-            return nil
-        case .failed:
-            return store.ui("保存失败", "Save Failed")
-        case .externallyModified:
-            return store.ui("外部修改", "Modified Externally")
-        case .idle, .writtenToFile, .savedInWeiBei:
-            return nil
-        }
+        let status = store.activeNoteSaveStatus
+        guard status.showsStatusLabel else { return nil }
+        return status == .failed
+            ? store.ui("保存失败", "Save Failed")
+            : store.ui("外部修改", "Modified Externally")
     }
 }
 

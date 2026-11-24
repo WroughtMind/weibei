@@ -11,8 +11,8 @@
     },
     {
       "name": "editor-entry.js",
-      "bytes": 618711,
-      "sha256": "060d3b4d60170a77aefa7b94adc1df680f412945d38176d182a91060ef5eb14a"
+      "bytes": 618738,
+      "sha256": "a3ded50a8d319fa42023e53ebc9e02448f6d591a697822e78d7ca77964f5c327"
     },
     {
       "name": "editor.css",
@@ -21,8 +21,8 @@
     },
     {
       "name": "index.html",
-      "bytes": 61721,
-      "sha256": "e85cf1d040199759fddd12e232179b327b56dc6744e2ba0b7b5c69cd3737b5e6"
+      "bytes": 61680,
+      "sha256": "61fb152288ae4b665d583850deb3f0ff9404f8f8e0dcca7a62c421e1b0a0ebce"
     },
     {
       "name": "KaTeX_AMS-Regular.woff2",
@@ -181,8 +181,8 @@
     },
     {
       "name": "viewer-entry.js",
-      "bytes": 542406,
-      "sha256": "6d892e48e16a2b3edf46414027c5000c4b6506044b7fb481e16994b34331fd42"
+      "bytes": 542454,
+      "sha256": "2a4ef27c413edfeb4a34cf61032f0204b112acbf8ded42dd947c3ebe856d8a9a"
     }
   ]
 }
