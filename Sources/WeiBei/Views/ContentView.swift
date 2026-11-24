@@ -1376,9 +1376,20 @@ private struct UnifiedTopBarView: View {
             center: toolbarContent(paneToggleCluster),
             trailing: toolbarContent(trailingControls),
             overflowMenus: toolbarOverflowMenus,
-            isVisible: !store.courseWorkspacePresented
+            isVisible: !store.courseWorkspacePresented,
+            isFullScreen: isFullScreen
         )
         .frame(height: 0)
+        .overlay(alignment: .top) {
+            if isFullScreen && !store.courseWorkspacePresented {
+                CatalystFullScreenToolbar(
+                    leading: toolbarContent(leftPrimaryControls),
+                    center: toolbarContent(paneToggleCluster),
+                    trailing: toolbarContent(trailingControls),
+                    height: barHeight
+                )
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
                 let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1409,7 +1420,7 @@ private struct UnifiedTopBarView: View {
                 .overlay { shape.stroke(searchClusterStroke, lineWidth: 1) }
                 .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.36 : 0.16), radius: 16, y: 8)
                 .padding(.trailing, 12)
-                .padding(.top, contentTopInset + 5)
+                .padding(.top, (isFullScreen ? max(contentTopInset, barHeight) : contentTopInset) + 5)
             }
         }
         .zIndex(10)

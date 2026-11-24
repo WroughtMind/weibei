@@ -5,7 +5,7 @@ import XCTest
 final class WorkspaceToolbarAutoHideTests: XCTestCase {
     @MainActor
     private final class ToolbarItems: NSObject, NSToolbarDelegate {
-        let identifiers = ["navigation", "panes", "settings"].map { NSToolbarItem.Identifier($0) }
+        let identifiers = ["weibei.navigation", "panes", "settings"].map { NSToolbarItem.Identifier($0) }
         func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
         func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { identifiers }
         func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
@@ -66,7 +66,13 @@ final class WorkspaceToolbarAutoHideTests: XCTestCase {
         XCTAssertTrue(controls.allSatisfy { opacity($0) < 0.01 })
 
         controller.setPointerInside(true)
-        XCTAssertTrue(controls.allSatisfy { opacity($0) > 0.99 }, "Revealing controls must finish before a following click")
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let close = try XCTUnwrap(window.standardWindowButton(.closeButton))
+            XCTAssertLessThan(opacity(close), 0.01, "Traffic lights enter after the navigation starts moving")
+        }
+        XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(controls.allSatisfy { opacity($0) > 0.99 })
         XCTAssertEqual(window.contentLayoutRect, readingRect)
         XCTAssertEqual(views.map { $0.convert($0.bounds, to: nil) }, frames)
 

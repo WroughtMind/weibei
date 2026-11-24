@@ -567,8 +567,21 @@ enum CatalystBusinessCheck {
             result["toolbar_snapshot_scope"] = "attached NSUIViewToolbarItem UIView hierarchy; excludes native window chrome"
             try check("native_toolbar_render_snapshots", true)
         }
+        func fullScreenToolbarHover(in window: UIWindow) -> HoverPassThroughRegion.Probe? {
+            descendants(window).compactMap { $0 as? HoverPassThroughRegion.Probe }
+                .first { $0.accessibilityIdentifier == "fullscreen-toolbar-hover" && !$0.bounds.isEmpty }
+        }
+
         func verifyToolbarAutoHide(in window: UIWindow, name: String) async throws {
-            guard let toolbar = window.windowScene?.titlebar?.toolbar else { throw Failure("toolbar unavailable") }
+            guard let scene = window.windowScene, let titlebar = scene.titlebar,
+                  let toolbar = titlebar.toolbar else { throw Failure("toolbar unavailable") }
+            let inFullScreen = scene.isFullScreen
+            let fullScreenHover = fullScreenToolbarHover(in: window)
+            let fullScreenFrame = fullScreenHover.map { $0.convert($0.bounds, to: window) }
+            if inFullScreen {
+                guard titlebar.autoHidesToolbarInFullScreen, toolbar.items.isEmpty,
+                      fullScreenFrame != nil else { throw Failure("system and workspace toolbars are not separated") }
+            }
             let panes = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
                 .filter { !$0.isHidden && $0.bounds.width > 0 }
             let hosts = panes.flatMap(\.subviews).compactMap { $0 as? CatalystHostingView }
@@ -581,13 +594,22 @@ enum CatalystBusinessCheck {
             // Native events pass through the same monitor as user input. No
             // fixture writes the controller's visibility or content geometry.
             for inside in [false, true, false] {
-                let receipt = CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: inside)
-                guard receipt["queued"] == "true" else { throw Failure("toolbar hover event unavailable") }
-                try await until("\(name) toolbar \(inside ? "reveals" : "hides")") {
-                    let state = CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)
-                    result[name + "_latest_state"] = state
-                    return state[inside ? "all_shown" : "all_hidden"] == "true"
-                        && state["toolbar_visible"] == "true" && state["hover_attached"] == "true"
+                if inFullScreen, let fullScreenHover, let fullScreenFrame {
+                    let point = CGPoint(x: fullScreenFrame.midX,
+                                        y: inside ? fullScreenFrame.midY : fullScreenFrame.maxY + 40)
+                    guard CatalystDesktopWindow.shared.postFullScreenToolbarPointerForCheck(
+                        toolbar: toolbar, at: point, click: false
+                    ) else { throw Failure("full-screen workspace hover event unavailable") }
+                    try await until("\(name) in-content hover \(inside)") { fullScreenHover.inside == inside }
+                } else {
+                    let receipt = CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: inside)
+                    guard receipt["queued"] == "true" else { throw Failure("toolbar hover event unavailable") }
+                    try await until("\(name) toolbar \(inside ? "reveals" : "hides")") {
+                        let state = CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)
+                        result[name + "_latest_state"] = state
+                        return state[inside ? "all_shown" : "all_hidden"] == "true"
+                            && state["toolbar_visible"] == "true" && state["hover_attached"] == "true"
+                    }
                 }
                 states.append(CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar))
                 guard geometry() == initialFrames, scrollViews.map(\.contentOffset) == initialOffsets else {
@@ -598,9 +620,11 @@ enum CatalystBusinessCheck {
                           let end = fade.locations?.dropLast().last,
                           let colors = fade.colors as? [CGColor] else { return false }
                     let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+                    let expectedBottom = inFullScreen
+                        ? max(window.safeAreaInsets.top, pane.fullScreenToolbarHeight) : window.safeAreaInsets.top
                     return fade.frame == pane.bounds && fade.opacity == 1
                         && colors.first?.alpha == 0 && colors.last?.alpha == 1
-                        && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                        && abs(fadeBottom - expectedBottom) < 1
                 }) else {
                     throw Failure("toolbar reading gradient disappeared during hover")
                 }
@@ -951,8 +975,25 @@ enum CatalystBusinessCheck {
                 throw Failure("workspace window disappeared before opening settings")
             }
             let windowBoundsBeforeSettings = window.bounds
+            try await until("full-screen workspace controls are attached") {
+                workspaceScene.titlebar?.toolbar?.items.isEmpty == true && fullScreenToolbarHover(in: window) != nil
+            }
             try await verifyToolbarAutoHide(in: window, name: "native_toolbar_full_screen_auto_hide_stable_reading")
-            try await clickToolbar("weibei.actions")
+            guard let toolbar = workspaceScene.titlebar?.toolbar, let hover = fullScreenToolbarHover(in: window) else {
+                throw Failure("full-screen settings target unavailable")
+            }
+            let frame = hover.convert(hover.bounds, to: window)
+            let buttonInset = CGFloat(TopBarLeadingInset.value(isFullScreen: true))
+                + WeiBeiTopBarButton.width * store.interfaceTextScale.multiplier / 2
+            let settingsPoint = CGPoint(x: frame.maxX - buttonInset, y: frame.midY)
+            guard CatalystDesktopWindow.shared.postFullScreenToolbarPointerForCheck(
+                toolbar: toolbar, at: settingsPoint, click: false
+            ) else { throw Failure("full-screen settings hover unavailable") }
+            try await until("full-screen settings hover reaches the workspace") { hover.inside }
+            try await Task.sleep(for: .milliseconds(180))
+            guard CatalystDesktopWindow.shared.postFullScreenToolbarPointerForCheck(
+                toolbar: toolbar, at: settingsPoint, click: true
+            ) else { throw Failure("full-screen settings click unavailable") }
             try await until("connection cards inside the original workspace") {
                 store.settingsPresented && descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
                     && !AgentAccountService.shared.isRefreshingModels

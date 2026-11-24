@@ -36,6 +36,7 @@ import Foundation
     @MainActor func fullScreenWindowStateForCheck() -> [String: Bool]
     @MainActor func fullScreenWindowDiagnosticsForCheck() -> [[String: String]]
     @MainActor func postToolbarHoverForCheck(toolbar: NSObject, inside: Bool) -> [String: String]
+    @MainActor func postFullScreenToolbarPointerForCheck(toolbar: NSObject, at point: CGPoint, click: Bool) -> Bool
     @MainActor func toolbarAutoHideStateForCheck(toolbar: NSObject) -> [String: String]
     @MainActor func postToolbarClickForCheck(toolbar: NSObject, itemIdentifier: String,
                                            xFraction: Double, yFraction: Double, activateWindow: Bool,

@@ -144,6 +144,38 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
         return ["queued": "true", "inside": String(inside), "location": NSStringFromPoint(location)]
     }
 
+    @MainActor func postFullScreenToolbarPointerForCheck(toolbar: NSObject, at point: CGPoint, click: Bool) -> Bool {
+        guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
+              let toolbar = toolbar as? NSToolbar,
+              let window = NSApp.windows.first(where: { $0.toolbar === toolbar }),
+              window.styleMask.contains(.fullScreen), window.isVisible, window.isOnActiveSpace,
+              let content = window.contentView else { return false }
+        let bounds = content.bounds
+        let target = NSPoint(x: bounds.minX + point.x,
+            y: content.isFlipped ? bounds.minY + point.y : bounds.maxY - point.y)
+        guard bounds.contains(target) else { return false }
+        let location = content.convert(target, to: nil)
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        if click {
+            let number = toolbarClickCheckEventNumber
+            toolbarClickCheckEventNumber &+= 2
+            guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: location,
+                      modifierFlags: [], timestamp: timestamp, windowNumber: window.windowNumber,
+                      context: nil, eventNumber: number, clickCount: 1, pressure: 1),
+                  let up = NSEvent.mouseEvent(with: .leftMouseUp, location: location,
+                      modifierFlags: [], timestamp: timestamp + 0.01, windowNumber: window.windowNumber,
+                      context: nil, eventNumber: number, clickCount: 1, pressure: 0) else { return false }
+            NSApp.postEvent(down, atStart: false)
+            NSApp.postEvent(up, atStart: false)
+        } else {
+            guard let event = NSEvent.mouseEvent(with: .mouseMoved, location: location,
+                modifierFlags: [], timestamp: timestamp, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return false }
+            NSApp.postEvent(event, atStart: false)
+        }
+        return true
+    }
+
     @MainActor func toolbarAutoHideStateForCheck(toolbar: NSObject) -> [String: String] {
         guard Bundle.main.bundleIdentifier?.hasSuffix(".businesscheck") == true,
               let toolbar = toolbar as? NSToolbar,
@@ -510,7 +542,8 @@ final class NativeWindowBridge: NSObject, CatalystWindowBridge {
     private func updateFileDrops() {
         for window in NSApp.windows {
             guard let toolbar = window.toolbar, let visible = toolbarVisibility.object(forKey: toolbar)?.boolValue else { continue }
-            if toolbar.isVisible != visible {
+            // AppKit manages auto-hiding the title bar in full screen.
+            if !window.styleMask.contains(.fullScreen), toolbar.isVisible != visible {
 #if WEIBEI_ACCEPTANCE_CHECKS
                 fullScreenCheckToolbarChanges.append(String(describing: toolbar.identifier) + " "
                     + String(toolbar.isVisible) + " -> " + String(visible)
