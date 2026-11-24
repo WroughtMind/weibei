@@ -16,7 +16,6 @@ enum NoteEditorCommandType: String, Codable, Sendable {
     case setEditable
     case focus
     case scrollToHeading
-    case restoreCheckpoint
 }
 
 struct NoteEditorCommandEnvelope<Payload: Codable & Sendable>: Codable, Sendable {

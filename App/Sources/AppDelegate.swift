@@ -210,14 +210,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                     case .focusChat: store.focus(.agent)
                     case .previousMaterial: store.selectAdjacentItem(step: -1)
                     case .nextMaterial: store.selectAdjacentItem(step: 1)
-                    case .toggleRightPane: store.toggleRightPane()
-                    case .threePaneWorkspace: store.setLayout(.documentAgentNotes)
-                    case .swapThreePaneSecondaryPanes: store.swapThreePaneSecondaryPanes()
-                    case .immersiveReading: store.setLayout(.immersiveReading)
-                    case .immersiveChat: store.setLayout(.immersiveConversation)
-                    case .immersiveWriting: store.setLayout(.immersiveWriting)
                     case .selectionPrompt: store.setAgentSurface(.selectionFloat)
-                    case .hideChatOverlay: store.setAgentSurface(.hidden)
+                    case .hideChatOverlay: store.dismissFloatingSelectionAgent()
                     case .applyAgentAnswerToNote: store.applyLastAgentAnswerToNote()
                     case .replaceNoteSelection: store.replaceSelectionWithLastAgentAnswer()
                     case .applyAgentPatchToEditor: store.applyAgentPatchToEditor()
@@ -256,10 +250,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             return store.canNavigateForward
         case .searchInMaterial:
             return store.canSearchCurrentDocument
-        case .toggleRightPane:
-            return store.layout != .immersiveConversation
-        case .swapThreePaneSecondaryPanes:
-            return store.layout.isDocumentThreePane
         case .applyAgentAnswerToNote, .applyAgentPatchToEditor:
             return store.canApplyAgentAnswer
         case .replaceNoteSelection:
@@ -271,8 +261,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         case .hideChatOverlay:
             return store.agentSurface != .hidden
         case .newConversation, .toggleAppearance, .courseIndex, .focusLibrary, .focusReader,
-             .focusNotes, .focusChat, .previousMaterial, .nextMaterial, .threePaneWorkspace,
-             .immersiveReading, .immersiveChat, .immersiveWriting:
+             .focusNotes, .focusChat, .previousMaterial, .nextMaterial:
             return true
         }
     }

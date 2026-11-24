@@ -48,10 +48,14 @@ final class ShortcutsMenuTests: XCTestCase {
         )
     }
 
-    func testThreePaneLayoutRevealsEveryPane() throws {
+    func testPaneTogglesKeepCustomOrder() throws {
         let store = try makeStore()
-        store.paneState.setDocumentPanes(reader: true, agent: false, notes: false)
-        store.setLayout(.documentAgentNotes)
+        store.paneState.setDocumentPanes(reader: false, agent: false, notes: false)
+        store.threePaneOrder = [.notes, .reader, .agent]
+        store.toggleAgent()
+        store.toggleReader()
+        store.toggleNotes()
+        XCTAssertEqual(store.visibleDocumentPaneOrder, [.notes, .reader, .agent])
         XCTAssertTrue(store.showReader)
         XCTAssertTrue(store.showAgent)
         XCTAssertTrue(store.showNotes)

@@ -37,9 +37,9 @@
 
 | Task | In WeiBei |
 |:---|:---|
-| **Read** | Import a folder as a course, read PDF, HTML, Markdown, and plain text, and search your course material. |
+| **Read** | Import a folder as a course, read PDF, HTML, Markdown, plain text, Word (.docx), and PowerPoint (.pptx), and search your course material. |
 | **Ask** | Select text to ask a question. Click citations to view the source, or click an underlined passage to reopen its conversation. |
-| **Write** | Edit Markdown with images, formulas, and code blocks. AI changes appear as proposals and are saved after you approve them. |
+| **Write** | Edit Markdown with images, formulas, and code blocks. Ask AI to write to a specific note, or review a suggestion before accepting it. |
 | **Revisit** | View the material linked to a note and use learning memory to look up previous progress and questions. |
 
 > Reading at length, taking excerpts, and writing notes by hand are meaningful in themselves, even without AI.
@@ -52,32 +52,7 @@
 
 ## Themes
 
-Choose Paper, Xuan, Inkstone, or Stele, or one of four frosted-glass themes: Clear Glass, Dark Glass, Mist Glass, and Slate Glass. Open reading, chat, or writing on its own, and adjust text size across the app with <kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd>.
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-纸面-沉浸对话.webp"><img src="./website/assets/第三幕-真实截图-纸面-沉浸对话.webp" alt="Paper theme with a warm background in the chat pane" width="100%"></a>
-      <br><sub><b>Paper</b> · Chat</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-墨石-沉浸对话.webp"><img src="./website/assets/第三幕-真实截图-墨石-沉浸对话.webp" alt="Inkstone theme with a dark background in the chat pane" width="100%"></a>
-      <br><sub><b>Inkstone</b> · Chat</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-晴璃-沉浸阅读.webp"><img src="./website/assets/第三幕-真实截图-晴璃-沉浸阅读.webp" alt="Clear Glass theme with a light frosted background in the reader" width="100%"></a>
-      <br><sub><b>Clear Glass</b> · Reading</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-夜璃-沉浸阅读.webp"><img src="./website/assets/第三幕-真实截图-夜璃-沉浸阅读.webp" alt="Dark Glass theme with a dark frosted background in the reader" width="100%"></a>
-      <br><sub><b>Dark Glass</b> · Reading</sub>
-    </td>
-  </tr>
-</table>
-
-<p align="center"><sub>Four themes in the app. Click an image to enlarge it. The materials shown are for demonstration and are not bundled with WeiBei.</sub></p>
+The Drawbridge, Sudden Shower over the Bridge, Saint-Lazare Station, and Nocturne in Blue and Silver each have light and dark variants. Open or reorder the document, chat, and notes panes independently. Use <kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd> to adjust text size across the app.
 
 ## Local storage and AI permissions
 
@@ -85,7 +60,7 @@ Choose Paper, Xuan, Inkstone, or Stele, or one of four frosted-glass themes: Cle
 |:---|:---|
 | Storage | Courses, notes, full-text indexes, and learning memory are stored locally. Reading local files and writing notes require no model. |
 | Network | Online models receive the relevant excerpts needed for your request. Remote images and web content in documents also use the network. |
-| Approval | Formal notes and source relationships use proposals you review and accept. Learning memory is recorded automatically, with a notice of what was saved. |
+| Writing | WeiBei can apply explicit changes to a specified note or source relationship. Suggestions are applied when you accept them. Learning memory is recorded automatically, with a notice of what was saved. |
 | Access | AI reads through WeiBei's scoped tools, with no terminal or unrestricted file-system access. |
 
 Choose your model: built-in profiles include OpenAI, Anthropic, Google, DeepSeek, Kimi, and OpenRouter. Subscription sign-in, local llama.cpp, and custom OpenAI-compatible endpoints are also supported. Read the [privacy notice](PRIVACY.md) for the full data flow.
@@ -100,13 +75,13 @@ Or use the [Homebrew tap](https://github.com/taekchef/homebrew-tap), which selec
 brew install --cask taekchef/tap/weibei
 ```
 
-The app is not Apple-notarized. If macOS cannot verify the developer on first launch, confirm the download source and checksum, then follow the [installation instructions](Docs/releases/v0.0.2.md#下载与安装).
+The app is not Apple-notarized. If macOS cannot verify the developer on first launch, confirm the download source and checksum, then follow the [installation instructions](Docs/releases/v0.0.4.md#下载与安装).
 
 1. Import a folder of your own material as a course.
 2. Open a document, write notes alongside it, and try full-text search.
 3. When you want AI, connect a model in Settings. Select text to ask a question, follow a citation back to the source, or review a note proposal.
 
-Large files and scans may be reported as partially indexed. See the [0.0.2 release notes](Docs/releases/v0.0.2.md) for changes, installation options, and limitations.
+Large files and scans may be reported as partially indexed. See the [0.0.4 release notes](Docs/releases/v0.0.4.md) for changes, installation options, and limitations.
 
 ### Build from source
 
@@ -174,7 +149,7 @@ Live-provider checks require valid local credentials and are never silently repl
 
 SwiftUI and Mac Catalyst host the workspace; UIKit chat uses reusable cells and native rich-text layout. PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, Vision handles OCR, and SQLite FTS5 provides local full-text indexes. Chat math uses SwiftMath, web math uses KaTeX, and diagrams use Mermaid. The existing AppKit bridge handles window materials and Sparkle updates.
 
-A Swift-native Agent runtime handles the tool loop, provider connections, credentials, and session ledger. WeiBei validates citations, memory updates, note proposals, and rich answers before display or writing. Interactive `visualize` fragments run in a sandbox without network or local-file access. Long PDFs and scans use a resource-bounded helper process for text extraction, with OCR only on pages that have no native text.
+A Swift-native Agent runtime handles the tool loop, provider connections, credentials, and session ledger. WeiBei validates citations, memory updates, and note proposals before display or writing. Interactive content uses dshGenUI through the `genui` skill and the `render_ui` tool. Long PDFs and scans use a resource-bounded helper process for text extraction, with OCR only on pages that have no native text.
 
 </details>
 
@@ -185,7 +160,7 @@ A Swift-native Agent runtime handles the tool loop, provider connections, creden
 - [Note editor guide](Docs/note-slash-commands.md): note editor slash commands, image insertion, and code block behavior
 - [Course library and storage](Docs/course-library-architecture.md): course library and storage architecture
 - [Native Agent implementation](Docs/plans/2026-08-22-native-agent-runtime-实验计划.md): validation and rollout notes for the Swift-native Agent runtime
-- [Generative UI design](Docs/生成式界面基础与Visualize借鉴.md): generative UI foundations and the `visualize` decision
+- [Generative UI design](Docs/生成式界面基础与Visualize借鉴.md): design history for generative UI
 
 </details>
 

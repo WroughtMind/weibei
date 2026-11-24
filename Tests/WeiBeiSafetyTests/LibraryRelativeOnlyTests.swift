@@ -192,8 +192,7 @@ enum LibraryInsideOnlyCheck {
         let createdID = try store.createCourseInLibrary(title: "库内新建")
         let createdRoot = try XCTUnwrap(store.courseRootURL(for: createdID))
         XCTAssertTrue(CourseProjectPathPolicy.contains(library, createdRoot, includingRoot: false))
-        XCTAssertNil(store.course(withID: createdID)?.sourceRootPath)
-        XCTAssertNil(store.course(withID: createdID)?.sourceRootBookmarkData)
+        XCTAssertEqual(store.course(withID: createdID)?.sourceRootRelativePath, createdRoot.lastPathComponent)
 
         let traversal = StudyItem(
             id: "imported:traversal",
@@ -277,11 +276,6 @@ enum LibraryInsideOnlyCheck {
         XCTAssertFalse(snapshotText.contains("importedFileBookmarkData"))
         XCTAssertFalse(snapshotText.contains("sourceRootPath"))
         XCTAssertFalse(snapshotText.contains("sourceRootBookmarkData"))
-        XCTAssertTrue(
-            snapshot.courses?.allSatisfy {
-                $0.sourceRootPath == nil && $0.sourceRootBookmarkData == nil
-            } == true
-        )
 
         let originalTitle = try XCTUnwrap(store.course(withID: courseA)?.title)
         let renamed = library.appendingPathComponent("共享甲改名", isDirectory: true)

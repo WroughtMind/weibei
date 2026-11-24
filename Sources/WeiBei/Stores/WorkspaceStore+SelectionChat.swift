@@ -86,7 +86,7 @@ extension WorkspaceStore {
     }
 
     func updateAutomaticSelection(_ selection: SelectionContext) {
-        guard isConversationSurfaceVisible else { return }
+        guard showAgent else { return }
         if let previous = automaticSelection,
            previous.text == selection.text, previous.itemID == selection.itemID,
            previous.source == selection.source,

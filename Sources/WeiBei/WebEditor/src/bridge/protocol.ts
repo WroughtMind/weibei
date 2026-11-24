@@ -12,7 +12,6 @@ export const editorCommandTypes = [
   'replaceSelection',
   'executeSelectionCommand',
   'insertStructuredBlock',
-  'restoreCheckpoint',
 ] as const;
 
 export type EditorCommandType = typeof editorCommandTypes[number];

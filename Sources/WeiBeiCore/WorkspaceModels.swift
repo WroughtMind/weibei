@@ -161,11 +161,11 @@ public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hash
     public var systemImage: String {
         switch self {
         case .reader:
-            return "doc.text.magnifyingglass"
+            return "doc.text"
         case .agent:
-            return "bubble.left.and.text.bubble.right"
+            return "text.bubble"
         case .notes:
-            return "square.and.pencil"
+            return "note.text"
         }
     }
 
@@ -430,118 +430,6 @@ public enum SourceReferenceTitle {
     }
 }
 
-public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable, Sendable {
-    case documentAgentNotes
-    case documentNotesAgent
-    case immersiveReading
-    case immersiveConversation
-    case immersiveWriting
-
-    /// Retired "Reader / Notes" split persisted before the free-order workbench.
-    /// Old `workspace.json` files may still carry this string.
-    public static let retiredSplitPersistedValue = "documentNotesSplit"
-
-    public var id: String { rawValue }
-
-    /// Maps a persisted layout string back to the runtime enum.
-    /// Unknown (including future) strings resolve to nil so only the layout field
-    /// is ignored instead of failing the whole workspace decode.
-    public static func resolve(persistedValue: String) -> WorkspaceLayout? {
-        if persistedValue == retiredSplitPersistedValue {
-            return nil
-        }
-        return WorkspaceLayout(rawValue: persistedValue)
-    }
-
-    public func label(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .documentAgentNotes:
-            return language.text("阅读-对话-笔记", "Reader-Chat-Notes")
-        case .documentNotesAgent:
-            return language.text("阅读-笔记-对话", "Reader-Notes-Chat")
-        case .immersiveReading:
-            return language.text("沉浸阅读", "Immersive Reading")
-        case .immersiveConversation:
-            return language.text("沉浸对话", "Immersive Chat")
-        case .immersiveWriting:
-            return language.text("沉浸写笔记", "Immersive Writing")
-        }
-    }
-
-    public var hasCollapsibleRightPane: Bool {
-        switch self {
-        case .documentAgentNotes, .documentNotesAgent, .immersiveConversation:
-            return true
-        case .immersiveReading, .immersiveWriting:
-            return false
-        }
-    }
-
-    public var isDocumentThreePane: Bool {
-        switch self {
-        case .documentAgentNotes, .documentNotesAgent:
-            return true
-        case .immersiveReading, .immersiveConversation, .immersiveWriting:
-            return false
-        }
-    }
-
-    /// Document family (multi-pane) vs immersive single-pane — used so SwiftUI only animates family switches,
-    /// not every document-internal pane toggle (those are animated by AppKit).
-    public var isImmersiveFamily: Bool {
-        switch self {
-        case .immersiveReading, .immersiveConversation, .immersiveWriting:
-            return true
-        case .documentAgentNotes, .documentNotesAgent:
-            return false
-        }
-    }
-
-    public var allowsRailOnlyPanes: Bool {
-        switch self {
-        case .documentAgentNotes, .documentNotesAgent:
-            return true
-        case .immersiveReading, .immersiveConversation, .immersiveWriting:
-            return false
-        }
-    }
-
-    public var defaultThreePaneOrder: [WorkspacePaneRole]? {
-        switch self {
-        case .documentAgentNotes:
-            return [.reader, .agent, .notes]
-        case .documentNotesAgent:
-            return [.reader, .notes, .agent]
-        case .immersiveReading, .immersiveConversation, .immersiveWriting:
-            return nil
-        }
-    }
-
-    public var systemImage: String {
-        switch self {
-        case .documentAgentNotes:
-            return "rectangle.split.3x1"
-        case .documentNotesAgent:
-            return "rectangle.split.3x1.fill"
-        case .immersiveReading:
-            return "doc.text.magnifyingglass"
-        case .immersiveConversation:
-            return "bubble.left.and.text.bubble.right"
-        case .immersiveWriting:
-            return "square.and.pencil"
-        }
-    }
-
-    public var hasPrimaryAgentPane: Bool {
-        switch self {
-        case .documentAgentNotes, .documentNotesAgent, .immersiveConversation:
-            return true
-        case .immersiveReading, .immersiveWriting:
-            return false
-        }
-    }
-}
-
 /// App-wide motion preference: follow macOS, force WeiBei's motion off, or force it on
 /// even when the system asks for reduced motion. Persisted as a raw string in
 /// UserDefaults (`weibei.motion.preference`), never inside `workspace.json`.
@@ -743,30 +631,16 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
     }
 }
 
-public enum AgentSurface: String, Codable, CaseIterable, Identifiable, Sendable {
+public enum AgentSurface: String, Sendable {
     case selectionFloat
     case hidden
-
-    public var id: String { rawValue }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let raw = try container.decode(String.self)
-        // Legacy surfaces (bottomDrawer / cornerPanel / quietInsight) fall back to hidden.
-        self = AgentSurface(rawValue: raw) ?? .hidden
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .selectionFloat:
             return language.text("选区轻提示", "Selection Prompt")
         case .hidden:
-            return language.text("隐藏对话", "Hide Chat")
+            return language.text("关闭选区浮层", "Close Selection Panel")
         }
     }
 
@@ -978,16 +852,6 @@ public struct FloatingAgentSize: Equatable {
     }
 }
 
-public struct FloatingAgentResizeResult: Equatable {
-    public var size: FloatingAgentSize
-    public var offset: FloatingAgentCoordinate
-
-    public init(size: FloatingAgentSize, offset: FloatingAgentCoordinate) {
-        self.size = size
-        self.offset = offset
-    }
-}
-
 /// Top-left frame. Resize keeps the opposite edge still instead of recentering.
 public struct FloatingAgentTopLeftFrame: Equatable {
     public var origin: FloatingAgentCoordinate
@@ -1024,7 +888,6 @@ public enum SelectionFloatingAgentPlacement {
     public static let minimumAutomaticContentHeight = 112.0
     public static let maximumAutomaticContentHeight = 420.0
     public static let expandedHalfWidth = 190.0
-    public static let compactHalfWidth = 82.0
     /// Bounds the expanded panel after its content-only downward growth offset.
     public static let expandedHalfHeight = 230.0
     public static let compactHalfHeight = 28.0
@@ -1033,14 +896,6 @@ public enum SelectionFloatingAgentPlacement {
     public static let expandedComposerCollapsedHeight = 34.0
     /// Nominal height of the panel before an answer exists. Side choice uses this once.
     public static let initialPlacedPanelHeight = 96.0
-
-    public static func automaticContentHeight(measuredContentHeight: Double) -> Double {
-        clamp(
-            measuredContentHeight,
-            min: minimumAutomaticContentHeight,
-            max: maximumAutomaticContentHeight
-        )
-    }
 
     /// Answer viewport height. A fixed height scrolls inside. A floor still grows with the reply up to the cap.
     public static func resolvedFeedHeight(
@@ -1170,57 +1025,6 @@ public enum SelectionFloatingAgentPlacement {
         return FloatingAgentTopLeftFrame(
             origin: FloatingAgentCoordinate(x: x, y: y),
             size: FloatingAgentSize(width: width, height: height)
-        )
-    }
-
-    public static func resizedFrame(
-        current: FloatingAgentSize,
-        translation: FloatingAgentSize,
-        canvas: FloatingAgentSize,
-        edge: FloatingAgentResizeEdge
-    ) -> FloatingAgentResizeResult {
-        let maximumWidth = max(
-            minimumResizableWidth,
-            min(maximumResizableWidth, canvas.width - 36)
-        )
-        let maximumHeight = max(
-            minimumResizableContentHeight,
-            min(maximumResizableContentHeight, canvas.height - 160)
-        )
-        let resizesLeading = edge == .leading || edge == .topLeading || edge == .bottomLeading
-        let resizesTrailing = edge == .trailing || edge == .topTrailing || edge == .bottomTrailing
-        let resizesTop = edge == .top || edge == .topLeading || edge == .topTrailing
-        let resizesBottom = edge == .bottom || edge == .bottomLeading || edge == .bottomTrailing
-
-        let proposedWidth: Double
-        if resizesLeading {
-            proposedWidth = current.width - translation.width
-        } else if resizesTrailing {
-            proposedWidth = current.width + translation.width
-        } else {
-            proposedWidth = current.width
-        }
-
-        let proposedHeight: Double
-        if resizesTop {
-            proposedHeight = current.height - translation.height
-        } else if resizesBottom {
-            proposedHeight = current.height + translation.height
-        } else {
-            proposedHeight = current.height
-        }
-
-        let width = clamp(proposedWidth, min: minimumResizableWidth, max: maximumWidth)
-        let height = clamp(proposedHeight, min: minimumResizableContentHeight, max: maximumHeight)
-        let widthChange = width - current.width
-        let heightChange = height - current.height
-
-        return FloatingAgentResizeResult(
-            size: FloatingAgentSize(width: width, height: height),
-            offset: FloatingAgentCoordinate(
-                x: resizesLeading ? -widthChange / 2 : (resizesTrailing ? widthChange / 2 : 0),
-                y: resizesTop ? -heightChange / 2 : (resizesBottom ? heightChange / 2 : 0)
-            )
         )
     }
 
@@ -1548,12 +1352,6 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
 public enum AgentRole: String, Codable, Sendable {
     case user
     case assistant
-}
-
-public enum StudyAgentBackend: String, Codable, Hashable, Sendable {
-    case openAI
-    case offline
-    case native
 }
 
 public enum AgentReplyCompletionState: String, Codable, Hashable, Sendable {
@@ -2115,7 +1913,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var text: String
     public var contentBlocks: [AgentMessageContentBlock]
     public var source: String?
-    public var backend: StudyAgentBackend?
     public var completionState: AgentReplyCompletionState
     public var sources: [AgentReplySource]
     public var actions: [AgentReplyAction]
@@ -2135,7 +1932,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         text: String,
         contentBlocks: [AgentMessageContentBlock] = [],
         source: String?,
-        backend: StudyAgentBackend? = nil,
         completionState: AgentReplyCompletionState = .completed,
         sources: [AgentReplySource] = [],
         actions: [AgentReplyAction] = [],
@@ -2153,7 +1949,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.text = text
         self.contentBlocks = contentBlocks
         self.source = source
-        self.backend = backend
         self.completionState = completionState
         self.sources = sources
         self.actions = actions
@@ -2173,7 +1968,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case text
         case contentBlocks
         case source
-        case backend
         case completionState
         case sources
         case actions
@@ -2242,11 +2036,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             forKey: .source,
             marker: "reply-source:decode-failed"
         )
-        backend = decodeLossy(
-            StudyAgentBackend.self,
-            forKey: .backend,
-            marker: "reply-backend:decode-failed"
-        )
         completionState = decodeLossy(
             AgentReplyCompletionState.self,
             forKey: .completionState,
@@ -2302,7 +2091,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             try container.encode(contentBlocks, forKey: .contentBlocks)
         }
         try container.encodeIfPresent(source, forKey: .source)
-        try container.encodeIfPresent(backend, forKey: .backend)
         if completionState != .completed {
             try container.encode(completionState, forKey: .completionState)
         }
@@ -2360,7 +2148,6 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var courseLibraryRootIdentity: ImportedFileIdentity?
     public var courseLibraryRootBookmarkData: Data?
     public var noteSourceLinks: [NoteSourceLink]?
-    public var noteSourceLinksMigrationVersion: Int?
     public var materialNotePairings: [String: String]?
     public var noteMaterialPairings: [String: String]?
     public var studyLocationsByItemID: [String: StudyLocation]?
@@ -2383,16 +2170,10 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var modelName: String?
     public var agentProviderID: String?
     public var agentBaseURL: String?
-    /// Persisted as the raw string so unknown / retired values (see
-    /// `WorkspaceLayout.retiredSplitPersistedValue`) never fail the whole decode.
-    public var workspaceLayout: String?
     public var threePaneOrder: [WorkspacePaneRole]?
-    public var agentSurface: AgentSurface?
-    public var showLibrary: Bool?
     public var showReader: Bool?
     public var showAgent: Bool?
     public var showNotes: Bool?
-    public var showRightPane: Bool?
     public var showDailyInspiration: Bool?
     public var appearanceModeRaw: String?
     public var adaptImportedDocumentColors: Bool?
@@ -2414,7 +2195,6 @@ public struct PersistedWorkspace: Codable, Sendable {
         courseLibraryRootIdentity: ImportedFileIdentity? = nil,
         courseLibraryRootBookmarkData: Data? = nil,
         noteSourceLinks: [NoteSourceLink]? = nil,
-        noteSourceLinksMigrationVersion: Int? = nil,
         materialNotePairings: [String: String]? = nil,
         noteMaterialPairings: [String: String]? = nil,
         studyLocationsByItemID: [String: StudyLocation]? = nil,
@@ -2436,14 +2216,10 @@ public struct PersistedWorkspace: Codable, Sendable {
         modelName: String? = nil,
         agentProviderID: String? = nil,
         agentBaseURL: String? = nil,
-        workspaceLayout: String? = nil,
         threePaneOrder: [WorkspacePaneRole]? = nil,
-        agentSurface: AgentSurface? = nil,
-        showLibrary: Bool? = nil,
         showReader: Bool? = nil,
         showAgent: Bool? = nil,
         showNotes: Bool? = nil,
-        showRightPane: Bool? = nil,
         showDailyInspiration: Bool? = nil,
         appearanceModeRaw: String? = nil,
         adaptImportedDocumentColors: Bool? = nil,
@@ -2464,7 +2240,6 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.courseLibraryRootIdentity = courseLibraryRootIdentity
         self.courseLibraryRootBookmarkData = courseLibraryRootBookmarkData
         self.noteSourceLinks = noteSourceLinks
-        self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
         self.materialNotePairings = materialNotePairings
         self.noteMaterialPairings = noteMaterialPairings
         self.studyLocationsByItemID = studyLocationsByItemID
@@ -2486,14 +2261,10 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.modelName = modelName
         self.agentProviderID = agentProviderID
         self.agentBaseURL = agentBaseURL
-        self.workspaceLayout = workspaceLayout
         self.threePaneOrder = threePaneOrder
-        self.agentSurface = agentSurface
-        self.showLibrary = showLibrary
         self.showReader = showReader
         self.showAgent = showAgent
         self.showNotes = showNotes
-        self.showRightPane = showRightPane
         self.showDailyInspiration = showDailyInspiration
         self.appearanceModeRaw = appearanceModeRaw
         self.adaptImportedDocumentColors = adaptImportedDocumentColors

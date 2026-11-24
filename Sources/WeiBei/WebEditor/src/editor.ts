@@ -3731,14 +3731,6 @@ const dispatchEditorCommand = (value: unknown) => {
       applied = true;
       break;
     }
-    case 'restoreCheckpoint': {
-      const markdown = commandPayloadValue(command, 'markdown');
-      const revision = commandPayloadValue(command, 'revision');
-      if (typeof markdown !== 'string' || (revision !== undefined && (!Number.isInteger(revision) || Number(revision) < 0))) break;
-      loadMarkdownInternal(markdown, revision === undefined ? revisionState.revision : Number(revision), true);
-      applied = true;
-      break;
-    }
     }
   } catch (error) {
     post('commandRejected', { commandID: command.commandID, reason: String((error as any)?.message || error) });
@@ -3871,7 +3863,6 @@ if (WEIBEI_EDITOR_RUNTIME && window.weiBeiEditorCheckMode) {
     replaceSelection: replaceSelectionInternal,
     executeSelectionCommand: executeSelectionCommandInternal,
     applyAgentPatch: appendMarkdownInternal,
-    insertMarkdownImage: replaceSelectionInternal,
     insertMarkdown: insertMarkdownInternal,
     setEditable: setEditableInternal,
     setDocumentID: (next: any) => setDocumentIdentityInternal(String(next || ''), currentDocumentGeneration + 1),

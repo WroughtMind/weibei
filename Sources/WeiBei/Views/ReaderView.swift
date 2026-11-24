@@ -228,7 +228,6 @@ extension ImmersiveHoverTitleView where Actions == EmptyView {
 
 struct ReaderView: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
-    var isImmersive = false
     var showsFloatingTitle = false
     var floatingTitleReorderRole: WorkspacePaneRole? = nil
 
@@ -282,7 +281,7 @@ struct ReaderView: View {
         let availableHeight = max(measuredPaneSize.height, 1)
         let railOnly = ContentRailMetrics.isRailOnly(
             availableWidth: availableWidth,
-            allowed: supportsContentRail && !isImmersive
+            allowed: supportsContentRail
         )
         return ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
@@ -299,15 +298,15 @@ struct ReaderView: View {
 
             if !railOnly, store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
-                    .padding(.trailing, isImmersive ? 18 : 10)
-                    .padding(.bottom, isImmersive ? 18 : 12)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 12)
                     .transition(WeiBeiTransition.floating)
             }
 
             if !railOnly, pdfHasSelectableText == false {
                 pdfTextLayerNotice
-                    .padding(.leading, isImmersive ? 18 : 14)
-                    .padding(.bottom, isImmersive ? 18 : 14)
+                    .padding(.leading, 14)
+                    .padding(.bottom, 14)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .transition(WeiBeiTransition.floating)
             }

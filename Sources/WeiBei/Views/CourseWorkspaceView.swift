@@ -192,9 +192,6 @@ struct CourseWorkspaceView: View {
                 selectedNoteID: $selectedNoteID,
                 selectedSessionID: $selectedSessionID,
                 isCompact: size.width < 960,
-                openRelations: {
-                    page = .map
-                },
                 openRecords: {
                     page = .records
                 },

@@ -24,7 +24,7 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let fitsSidebar = !isImmersiveLayout && geometry.size.width >= WeiBeiMetric.courseDrawerWidth + WeiBeiMetric.minimumWorkspaceWidth
+            let fitsSidebar = geometry.size.width >= WeiBeiMetric.courseDrawerWidth + WeiBeiMetric.minimumWorkspaceWidth
             ZStack {
                 WorkspaceChromeBackdrop(isFullScreen: windowIsFullScreen)
 
@@ -38,7 +38,6 @@ struct ContentView: View {
 
                 VStack(spacing: 0) {
                     UnifiedTopBarView(
-                        isImmersiveLayout: isImmersiveLayout,
                         isFullScreen: windowIsFullScreen,
                         contentTopInset: geometry.safeAreaInsets.top,
                         searchFocused: $topSearchFocused
@@ -62,10 +61,6 @@ struct ContentView: View {
                                     ? Color.clear
                                     : Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
                             )
-                            // Only cross-fade immersive ↔ document families. Pane show/hide inside
-                            // the document family is owned by AppKit StableDocumentWorkspace animation
-                            // — a second SwiftUI layout animation here made toggles feel split/janky.
-                            .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
                             .background {
                                 GeometryReader { content in
                                     Color.clear.preference(
@@ -161,9 +156,6 @@ struct ContentView: View {
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
-
-                // Agent 创建文稿的写盘确认浮层：覆盖课程空间等全部层级。
-                AgentDocumentConfirmationOverlay()
             }
             .contentShape(Rectangle())
             .allowsHitTesting(!store.settingsPresented)
@@ -249,10 +241,6 @@ struct ContentView: View {
         // showLibrary animation is scoped to the drawer ZStack only (above).
         .animation(WeiBeiMotion.visibility(store.courseWorkspacePresented, size: .large), value: store.courseWorkspacePresented)
         .weiBeiFadeWhenReducingMotion(store.courseWorkspacePresented)
-    }
-
-    private var isImmersiveLayout: Bool {
-        [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
     }
 
 #if targetEnvironment(macCatalyst)
@@ -473,7 +461,6 @@ private struct GlobalFloatingSelectionLayer: View {
     private var showsGlobalFloatingAgent: Bool {
         // The selection composer stays beside the passage in every reading layout.
         !store.courseWorkspacePresented
-            && store.canShowSelectionPromptSurface
             && SelectionFloatingAgentPlacement.isVisible(
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
@@ -802,7 +789,6 @@ private struct LibraryAwareEscapeBridge: View {
 
     private var showsGlobalFloatingAgent: Bool {
         !courseWorkspacePresented
-            && store.canShowSelectionPromptSurface
             && SelectionFloatingAgentPlacement.isVisible(
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
@@ -1361,7 +1347,6 @@ private struct UnifiedTopBarView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.weiBeiTextScale) private var textScale
-    let isImmersiveLayout: Bool
     let isFullScreen: Bool
     let contentTopInset: CGFloat
     var searchFocused: FocusState<Bool>.Binding
@@ -1446,9 +1431,9 @@ private struct UnifiedTopBarView: View {
             }
         ]
         let panes = [
-            toolbarAction(store.ui("文稿", "Document"), id: "reader", selected: store.isPaneToggleActive(.reader), action: store.toggleReader),
-            toolbarAction(store.ui("对话", "Chat"), id: "agent", selected: store.isPaneToggleActive(.agent), action: store.toggleAgent),
-            toolbarAction(store.ui("笔记", "Notes"), id: "notes", selected: store.isPaneToggleActive(.notes), action: store.toggleNotes)
+            toolbarAction(store.ui("文稿", "Document"), id: "reader", selected: store.isPaneVisible(.reader), action: store.toggleReader),
+            toolbarAction(store.ui("对话", "Chat"), id: "agent", selected: store.isPaneVisible(.agent), action: store.toggleAgent),
+            toolbarAction(store.ui("笔记", "Notes"), id: "notes", selected: store.isPaneVisible(.notes), action: store.toggleNotes)
         ]
         var actions: [UIAction] = []
         if updateService.showsToolbarControl {
@@ -1775,7 +1760,6 @@ private struct UnifiedTopBarView: View {
                 appeared = true
             }
         }
-        .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.feedback, value: paneState.showReader)
         .animation(WeiBeiMotion.feedback, value: paneState.showAgent)
@@ -1912,30 +1896,30 @@ private struct UnifiedTopBarView: View {
         WeiBeiSegmentedControl(segments: [
             WeiBeiSegmentedControl.Segment(
                 id: "reader",
-                systemImage: "doc.text",
-                help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
-                isSelected: store.isPaneToggleActive(.reader),
+                systemImage: WorkspacePaneRole.reader.systemImage,
+                help: store.isPaneVisible(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
+                isSelected: store.isPaneVisible(.reader),
                 action: store.toggleReader
             ),
             WeiBeiSegmentedControl.Segment(
                 id: "agent",
-                systemImage: "text.bubble",
+                systemImage: WorkspacePaneRole.agent.systemImage,
                 help: agentPaneToggleHelp,
-                isSelected: store.isPaneToggleActive(.agent),
+                isSelected: store.isPaneVisible(.agent),
                 action: store.toggleAgent
             ),
             WeiBeiSegmentedControl.Segment(
                 id: "notes",
-                systemImage: "note.text",
-                help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
-                isSelected: store.isPaneToggleActive(.notes),
+                systemImage: WorkspacePaneRole.notes.systemImage,
+                help: store.isPaneVisible(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
+                isSelected: store.isPaneVisible(.notes),
                 action: store.toggleNotes
             ),
         ])
     }
 
     private var agentPaneToggleHelp: String {
-        if store.isPaneToggleActive(.agent) {
+        if store.isPaneVisible(.agent) {
             return store.ui("隐藏对话", "Hide chat")
         }
         if interaction.selectionContext != nil {
@@ -2072,36 +2056,15 @@ private struct LayoutContentView: View {
     @AppStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
     
     var body: some View {
-        Group {
-            switch store.layout {
-            case .documentAgentNotes, .documentNotesAgent:
-                documentPaneLayoutView()
-            // Keep the pane full-height so its shared mask can fade content
-            // within the toolbar, rather than clipping it below the gradient.
-            case .immersiveReading:
-                PersistentPaneHost(role: .reader, registry: paneHostRegistry)
-                    .ignoresSafeArea(.container, edges: .top)
-            case .immersiveConversation:
-                PersistentPaneHost(role: .agent, registry: paneHostRegistry)
-                    .ignoresSafeArea(.container, edges: .top)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(WeiBeiTransition.layout)
-            case .immersiveWriting:
-                PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                    .ignoresSafeArea(.container, edges: .top)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .transition(WeiBeiTransition.layout)
-        // Document-internal pane toggles must not re-trigger SwiftUI layout animation.
-        .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
-        // Opening the selection float must not animate this workspace. That
-        // transaction was rebuilding the reader and painting the document again.
-        .animation(nil, value: interaction.agentSurface)
-        // Touch pane flags so SwiftUI rebuilds visibleOrder when only paneState publishes.
-        .animation(nil, value: paneState.showReader)
-        .animation(nil, value: paneState.showAgent)
-        .animation(nil, value: paneState.showNotes)
+        documentPaneLayoutView()
+            .transition(WeiBeiTransition.layout)
+            // Opening the selection float must not animate this workspace. That
+            // transaction was rebuilding the reader and painting the document again.
+            .animation(nil, value: interaction.agentSurface)
+            // Touch pane flags so SwiftUI rebuilds visibleOrder when only paneState publishes.
+            .animation(nil, value: paneState.showReader)
+            .animation(nil, value: paneState.showAgent)
+            .animation(nil, value: paneState.showNotes)
     }
 
     private var firstSplit: Binding<CGFloat> {
@@ -2392,6 +2355,7 @@ struct PersistentPaneHost: NSViewRepresentable {
 
 struct PersistentPaneRoot: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
     let role: WorkspacePaneRole
 
     var body: some View {
@@ -2418,7 +2382,6 @@ struct PersistentPaneRoot: View {
         switch role {
         case .reader:
             ReaderView(
-                isImmersive: store.layout == .immersiveReading,
                 showsFloatingTitle: true,
                 floatingTitleReorderRole: reorderRole
             )
@@ -2433,13 +2396,8 @@ struct PersistentPaneRoot: View {
     }
 
     private var reorderRole: WorkspacePaneRole? {
-        guard store.visibleDocumentPaneOrder.count > 1 else { return nil }
-        switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            return role
-        case .immersiveReading, .immersiveConversation, .immersiveWriting:
-            return nil
-        }
+        let visibleCount = [paneState.showReader, paneState.showAgent, paneState.showNotes].filter { $0 }.count
+        return visibleCount > 1 ? role : nil
     }
 }
 

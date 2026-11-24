@@ -39,9 +39,8 @@ targets:
       - path: ../Sources/WeiBei/Editing
       - path: ../Sources/WeiBei/Services/WeiBeiUpdateService.swift
       - path: ../Sources/WeiBei/Views
-        excludes: [NativeChatMarkdownView.swift, NativeChatAttachment.swift, NativeChatCodeHighlighter.swift]
       - path: ../Sources/WeiBei/Support
-        excludes: [NativeChatMarkdownPipeline.swift, NativeChatMarkdownDocument.swift, QuietScrollers.swift]
+        excludes: [QuietScrollers.swift]
       - path: ../Sources/WeiBei/Resources/Fonts
         type: folder
         buildPhase: resources
@@ -166,7 +165,7 @@ targets:
             UTTypeDescription: Markdown
             UTTypeConformsTo: [public.plain-text]
             UTTypeTagSpecification:
-              public.filename-extension: [md, markdown, mdown]
+              public.filename-extension: [md, markdown]
         LabBusinessCheckEndpoint: $(LAB_BUSINESS_CHECK_ENDPOINT)
   WeiBeiWindowBridge:
     type: bundle

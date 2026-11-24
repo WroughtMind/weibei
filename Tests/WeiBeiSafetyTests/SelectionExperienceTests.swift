@@ -177,7 +177,6 @@ final class SelectionExperienceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        store.layout = .documentAgentNotes
         store.showAgent = true
         store.updateSelection("刚选中的原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
         XCTAssertEqual(store.selectionAttachments.count, 1)
@@ -195,7 +194,6 @@ final class SelectionExperienceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        store.layout = .documentAgentNotes
         store.showAgent = true
         let manual = SelectionContext(text: "手动保留的另一段", source: .note, ownerTitle: "笔记")
         store.addSelectionAttachment(manual)
@@ -270,7 +268,7 @@ final class SelectionExperienceTests: XCTestCase {
         store.selfCheckAgentResponder = { request in
             submitted = request
             store.addConversationQuote("发送之后新选的内容", messageID: nil, in: sessionID)
-            return StudyAgentReply(text: "解释结果", backend: .native)
+            return StudyAgentReply(text: "解释结果")
         }
         store.submitAgentDraft(sessionID: sessionID)
         let done = expectation(description: "quoted context submitted")
@@ -358,7 +356,6 @@ final class SelectionExperienceTests: XCTestCase {
         store.agentReasoningMappings[store.agentReasoningMappingKey(.think)] = "max"
         store.agentReasoningMappings[store.agentReasoningMappingKey(.flash)] = "medium"
         let mainID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
-        store.layout = .documentAgentNotes
         store.showAgent = true
         store.selectedItemID = "document-a"
         store.saveComposerDraft("主会话未发送的草稿", for: mainID)
@@ -375,7 +372,7 @@ final class SelectionExperienceTests: XCTestCase {
         var submitted: StudyAgentRequest?
         store.selfCheckAgentResponder = { request in
             submitted = request
-            return StudyAgentReply(text: "公式 A 的解释", backend: .native)
+            return StudyAgentReply(text: "公式 A 的解释")
         }
         store.submitAgentDraft(sessionID: firstID)
         let done = expectation(description: "independent question persisted")
@@ -520,17 +517,17 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testAskKeepsThePassageAndFloatingInputInEveryReadingLayout() {
+    func testAskKeepsThePassageAndFloatingInputWithOrWithoutChatPane() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        for layout in [WorkspaceLayout.immersiveReading, .documentAgentNotes] {
-            store.layout = layout
-            store.showAgent = true
+        for showChat in [false, true] {
+            store.paneState.setDocumentPanes(reader: true, agent: showChat, notes: false)
+            let order = store.visibleDocumentPaneOrder
             let anchor = SelectionPopoverAnchor(x: 320, y: 210)
             store.updateSelection("原处提问", source: .document, anchor: anchor)
             store.askSelection()
-            XCTAssertEqual(store.layout, layout)
+            XCTAssertEqual(store.visibleDocumentPaneOrder, order)
             XCTAssertEqual(store.agentSurface, .selectionFloat)
             XCTAssertEqual(store.selectionAnchor, anchor)
             XCTAssertTrue(store.keepFloatingSelectionForAnswer)

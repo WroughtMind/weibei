@@ -39,48 +39,6 @@ struct GlobalSearchOutcome: Sendable {
 
 extension WorkspaceStore {
 
-    /// 课程内搜索——行为与迁移前完全一致。
-    func searchCourseHome(
-        courseID: UUID,
-        query rawQuery: String,
-        resultLimit: Int = 50
-    ) async -> CourseHomeSearchOutcome {
-        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty,
-              courses.contains(where: { $0.id == courseID }) else {
-            return CourseHomeSearchOutcome(results: [], availability: .ready)
-        }
-        let itemInputs = courseItems(in: courseID).map { item in
-            CourseSearchItemInput(
-                item: item,
-                title: displayTitle(for: item),
-                detail: displaySubtitle(for: item),
-                memoryText: item.isNotebookNote
-                    ? (item.id == activeNotebookItemID
-                        ? noteText
-                        : notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id])
-                    : nil
-            )
-        }
-        ensureStudySessionMessagesLoaded(touchingCourse: courseID)
-        let sessions = sessionsTouchingCourse(courseID)
-        let search = await runCourseSearchKernel(
-            itemInputs: itemInputs,
-            sessions: sessions,
-            query: query,
-            chatDetail: ui("%d 条消息", "%d messages"),
-            resultLimit: resultLimit
-        )
-        guard !Task.isCancelled else {
-            return CourseHomeSearchOutcome(results: [], availability: .ready)
-        }
-        lastCourseHomeSearchRanOnMainThread = search.ranOnMainThread
-        return CourseHomeSearchOutcome(
-            results: search.results,
-            availability: search.availability
-        )
-    }
-
     /// 跨课程全局搜索:所有课程的资料/笔记/对话一次查完;
     /// 当前课程命中排在最前,其余按内核排序跟随,默认返回 100 条。
     func searchAllCourses(

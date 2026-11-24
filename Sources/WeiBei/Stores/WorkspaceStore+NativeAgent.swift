@@ -117,17 +117,8 @@ extension WorkspaceStore {
         return streamed.isEmpty ? message.text : streamed
     }
 
-    func agentReplyDisplayedStreamingText(_ message: AgentMessage) -> Bool {
-        agentReplyIDsThatDisplayedStreamingText.contains(message.id)
-    }
-
     var isAgentStreamingSurfaceVisible: Bool {
-        hasPrimaryConversationPaneVisible || agentSurface == .selectionFloat
-    }
-
-    func finishAgentStreamingDisplay() {
-        agentStreaming.finishDisplaying()
-        latestAgentStreamingText = ""
+        showAgent || agentSurface == .selectionFloat
     }
 
     func settleAgentStreamingDisplayImmediately() {

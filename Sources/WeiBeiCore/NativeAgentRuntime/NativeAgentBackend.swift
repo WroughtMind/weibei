@@ -41,7 +41,6 @@ public struct NativeLiveStores: Sendable {
     public var skillRegistry: NativeSkillRegistry
     public var startSubagent: (@Sendable (NativeSubagentRequest) async -> NativeSubagentResult)?
     /// 写盘前的用户确认：宿主弹出确认浮层，返回 true 才落盘；false 表示用户取消。
-    public var confirmDocumentCreation: (@Sendable (_ title: String, _ summary: String) async -> Bool)?
 
     public init(
         learning: (@Sendable () async -> StudyAgentLearningContext)? = nil,
@@ -54,7 +53,6 @@ public struct NativeLiveStores: Sendable {
         documentsRoot: URL? = nil,
         skillRegistry: NativeSkillRegistry = NativeSkillRegistry(),
         startSubagent: (@Sendable (NativeSubagentRequest) async -> NativeSubagentResult)? = nil,
-        confirmDocumentCreation: (@Sendable (_ title: String, _ summary: String) async -> Bool)? = nil
     ) {
         self.learning = learning
         self.profile = profile
@@ -66,7 +64,6 @@ public struct NativeLiveStores: Sendable {
         self.documentsRoot = documentsRoot
         self.skillRegistry = skillRegistry
         self.startSubagent = startSubagent
-        self.confirmDocumentCreation = confirmDocumentCreation
     }
 
     public static let empty = NativeLiveStores()

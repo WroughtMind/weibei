@@ -37,9 +37,9 @@
 
 | 场景 | 在魏碑里 |
 |:---|:---|
-| **阅读** | 导入文件夹作为课程，阅读 PDF、HTML、Markdown 和纯文本，搜索课程资料。 |
+| **阅读** | 导入文件夹作为课程，阅读 PDF、HTML、Markdown、纯文本、Word（.docx）和 PowerPoint（.pptx），搜索课程资料。 |
 | **提问** | 选中文字提问，点击回答里的引用查看原文；点击原文下划线可重开对应对话。 |
-| **笔记** | 编辑 Markdown，插入图片、公式和代码块。AI 修改笔记前会显示提案，确认后才写入。 |
+| **笔记** | 编辑 Markdown，插入图片、公式和代码块。可以请 AI 直接写入指定笔记，也可以先看建议再采用。 |
 | **回看** | 查看笔记关联的资料，通过学习记忆查询之前的进度和问题。 |
 
 > 长时间阅读、摘抄、亲手记笔记，就算完全离开 AI，本身就是有意义的事。
@@ -52,32 +52,7 @@
 
 ## 界面主题
 
-纸面、宣纸、墨石、石碑，另有晴璃、夜璃、雾璃、玄璃四款毛玻璃主题。阅读、对话、写作都可以独立展开；用 <kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd> 调整全局字号。
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-纸面-沉浸对话.webp"><img src="./website/assets/第三幕-真实截图-纸面-沉浸对话.webp" alt="纸面主题，暖色背景的沉浸对话" width="100%"></a>
-      <br><sub><b>纸面</b> · 沉浸对话</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-墨石-沉浸对话.webp"><img src="./website/assets/第三幕-真实截图-墨石-沉浸对话.webp" alt="墨石主题，深色背景的沉浸对话" width="100%"></a>
-      <br><sub><b>墨石</b> · 沉浸对话</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-晴璃-沉浸阅读.webp"><img src="./website/assets/第三幕-真实截图-晴璃-沉浸阅读.webp" alt="晴璃主题，浅色毛玻璃背景的沉浸阅读" width="100%"></a>
-      <br><sub><b>晴璃</b> · 沉浸阅读</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="./website/assets/第三幕-真实截图-夜璃-沉浸阅读.webp"><img src="./website/assets/第三幕-真实截图-夜璃-沉浸阅读.webp" alt="夜璃主题，深色毛玻璃背景的沉浸阅读" width="100%"></a>
-      <br><sub><b>夜璃</b> · 沉浸阅读</sub>
-    </td>
-  </tr>
-</table>
-
-<p align="center"><sub>四款主题实景，点击图片查看大图。截图中的资料用于展示，应用不内置这些内容。</sub></p>
+「吊桥」「大桥骤雨」「圣拉扎尔车站」与「蓝与银的夜曲」各有浅色和深色。文稿、对话和笔记可以分别打开、拖动重排。用 <kbd>⌘</kbd> + <kbd>+</kbd> / <kbd>−</kbd> 调整全局字号。
 
 ## 本地存储与 AI 权限
 
@@ -85,7 +60,7 @@
 |:---|:---|
 | 保存 | 课程、笔记、全文索引和学习记忆在本地保存。阅读本地资料和写笔记不需要模型。 |
 | 联网 | 在线模型会收到完成请求所需的相关摘录；资料中的远程图片、网页内容也会联网加载。 |
-| 写入 | 正式笔记和出处关系的修改先显示提案，由你确认。学习记忆自动记录，并有轻提示说明存了什么。 |
+| 写入 | 当你明确要求修改指定笔记或出处关系时，魏碑可直接执行。一般建议由你采用后写入。学习记忆自动记录，并有轻提示说明存了什么。 |
 | 访问 | AI 通过魏碑提供的限定工具读取资料，没有终端或任意文件系统访问权。 |
 
 模型由你选择：OpenAI、Anthropic、Google、DeepSeek、Kimi、OpenRouter 等内置预设，也支持订阅登录、本地 llama.cpp 和自定义 OpenAI 兼容接口。完整的数据流向见[隐私说明](PRIVACY.md)。
@@ -100,13 +75,13 @@
 brew install --cask taekchef/tap/weibei
 ```
 
-安装包未经 Apple 公证。首次打开提示无法验证开发者时，请先确认下载来源与校验值，再按[首次安装说明](Docs/releases/v0.0.2.md#下载与安装)处理。
+安装包未经 Apple 公证。首次打开提示无法验证开发者时，请先确认下载来源与校验值，再按[首次安装说明](Docs/releases/v0.0.4.md#下载与安装)处理。
 
 1. 导入自己的资料文件夹，作为一门课程打开。
 2. 选一份资料阅读，在旁边写笔记，试试全文搜索。
 3. 需要 AI 时，在设置中连接模型，再选中文字提问、点击引用回看原文，或审阅一份笔记提案。
 
-大文件和扫描件会按实际情况显示部分索引状态。**0.0.2** 的更新、安装方式与使用边界见[发布说明](Docs/releases/v0.0.2.md)。
+大文件和扫描件会按实际情况显示部分索引状态。**0.0.4** 的更新、安装方式与使用边界见[发布说明](Docs/releases/v0.0.4.md)。
 
 ### 从源码运行
 
@@ -174,7 +149,7 @@ swift run WeiBeiNativeCheck --authentication-status
 
 SwiftUI 与 Mac Catalyst 承载工作区，UIKit 会话复用列表和原生富文本排版。PDFKit 读取 PDF，WebKit 渲染 HTML 和 Milkdown 编辑器，Vision 处理扫描页 OCR，SQLite FTS5 提供本地全文索引。会话公式使用 SwiftMath，网页公式使用 KaTeX，图表使用 Mermaid；现有 AppKit 桥接负责窗口材质和 Sparkle 更新。
 
-Swift 原生 Agent 运行时负责工具循环、供应商连接、凭据与会话账本。魏碑在展示或写入前校验引用、学习记忆更新、笔记提案和富答案；`visualize` 交互片段在无网络、无本地文件访问的沙箱中执行。长 PDF 和扫描件通过资源受限的辅助进程抽取文本，仅无原生文本的页面使用 OCR。
+Swift 原生 Agent 运行时负责工具循环、供应商连接、凭据与会话账本。魏碑在展示或写入前校验引用、学习记忆更新、笔记提案。交互内容使用 dshGenUI，由 `genui` 技能指导并通过 `render_ui` 展示。长 PDF 和扫描件通过资源受限的辅助进程抽取文本，仅无原生文本的页面使用 OCR。
 
 </details>
 
@@ -185,7 +160,7 @@ Swift 原生 Agent 运行时负责工具循环、供应商连接、凭据与会�
 - [笔记编辑说明](Docs/note-slash-commands.md)：笔记编辑器斜杠命令、图片插入与代码块行为
 - [课程库与存储架构](Docs/course-library-architecture.md)：课程库与存储架构
 - [原生 Agent 落地记录](Docs/plans/2026-08-22-native-agent-runtime-实验计划.md)：Swift 原生 Agent 运行时的验证与落地记录
-- [生成式界面设计](Docs/生成式界面基础与Visualize借鉴.md)：生成式界面基础与 `visualize` 决策
+- [生成式界面设计](Docs/生成式界面基础与Visualize借鉴.md)：生成式界面设计的历史记录
 
 </details>
 

@@ -76,7 +76,6 @@ final class CourseSidebarModel: ObservableObject {
     @Published private(set) var selectedItemID: String?
     @Published private(set) var activeNotebookItemID: String?
     @Published private(set) var activeCourseID: UUID?
-    @Published private(set) var notebookRenameDraft: NotebookRenameDraft?
     @Published private(set) var interfaceLanguage: WeiBeiInterfaceLanguage
     @Published private(set) var appearanceMode: WeiBeiAppearanceMode
     @Published private(set) var query: String
@@ -124,7 +123,6 @@ final class CourseSidebarModel: ObservableObject {
         selectedItemID = store.selectedItemID
         activeNotebookItemID = store.activeNotebookItemID
         activeCourseID = store.activeCourseID
-        notebookRenameDraft = store.notebookRenameDraft
         activeNoteTitleSignature = NoteTabDisplayTitle.bodyTitleLine(from: store.noteText)
         rebuild()
 
@@ -155,9 +153,6 @@ final class CourseSidebarModel: ObservableObject {
         store.$activeCourseID.dropFirst().sink { [weak self] courseID in
             self?.activeCourseID = courseID
             self?.scheduleRebuild()
-        }.store(in: &subscriptions)
-        store.$notebookRenameDraft.dropFirst().sink { [weak self] draft in
-            self?.notebookRenameDraft = draft
         }.store(in: &subscriptions)
         store.$recentlyImportedItemIDs.dropFirst().sink { [weak self] itemIDs in
             guard let self else { return }
