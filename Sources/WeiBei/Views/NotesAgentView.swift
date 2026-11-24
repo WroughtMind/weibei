@@ -2458,25 +2458,49 @@ private struct ConversationQuoteRow: View {
 private struct AgentSelectionAttachmentPill: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
-    @State private var pillHovering = false
-    @State private var previewHovering = false
-    @State private var closeToken = UUID()
+    @State private var hovering = false
+    @State private var showingManager = false
     @State private var previewContentHeight: CGFloat?
+
+    private var countLabel: String {
+        let count = interaction.selectionAttachments.count
+        return store.ui("\(count) 个已选文本片段", "\(count) selected text fragments")
+    }
+
+    private var sourceSummary: String {
+        var seen = Set<String>()
+        let titles = interaction.selectionAttachments.map(\.ownerTitle)
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        let names = titles.prefix(3).joined(separator: store.ui("、", ", "))
+        if titles.count > 3 {
+            return store.ui("\(names) 等 \(titles.count) 个来源", "\(names) and \(titles.count - 3) more")
+        }
+        return names.isEmpty ? countLabel : names
+    }
 
     var body: some View {
         if !interaction.selectionAttachments.isEmpty {
             HStack(spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "text.bubble")
-                        .weiBeiText(12, weight: .medium)
-                    Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
-                        .weiBeiText(12, weight: .medium)
+                Button { showingManager.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "text.bubble")
+                            .weiBeiText(12, weight: .medium)
+                        Text(countLabel)
+                            .weiBeiText(12, weight: .medium)
+                    }
+                    .frame(minHeight: 28)
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
-                .accessibilityElement(children: .combine)
+                .buttonStyle(.plain)
+                .onHover { hovering = $0 }
+                .help(Text(verbatim: sourceSummary))
+                .accessibilityLabel(Text(verbatim: countLabel))
+                .accessibilityHint(Text(store.ui("查看来源并管理片段", "Review sources and manage fragments")))
                 .accessibilityIdentifier("agent-selection-attachment-preview-anchor")
-                .onHover { value in
-                    setPillHovering(value)
+                .popover(isPresented: $showingManager, arrowEdge: .bottom) {
+                    previewContent
+                        .frame(idealWidth: 340, maxWidth: 360)
+                        .presentationCompactAdaptation(.popover)
                 }
 
                 Button(action: clearAllAttachments) {
@@ -2487,42 +2511,24 @@ private struct AgentSelectionAttachmentPill: View {
                 .accessibilityLabel(Text(store.ui("清空已选文本片段", "Clear selected text fragments")))
                 .help(store.ui("清空已选文本片段", "Clear selected text fragments"))
             }
-            .foregroundStyle(pillHovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+            .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
             .padding(.leading, 10)
             .padding(.trailing, 6)
             .frame(height: 28)
             .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54),
-                stroke: WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38),
+                fill: WeiBeiTheme.paperRaised.opacity(hovering ? 0.72 : 0.54),
+                stroke: WeiBeiTheme.hairline.opacity(hovering ? 0.68 : 0.38),
                 cornerRadius: 8,
-                contactShadow: pillHovering
+                contactShadow: hovering
             )
             .clipShape(RoundedRectangle(cornerRadius: 8))
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-            .background(AccessibilityFrameProbe(identifier: "selection-attachment-anchor-layout"))
-#endif
-            .accessibilityLabel(Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments")))
-            .help(store.ui("悬停查看选区", "Hover to preview selections"))
             .frame(maxWidth: .infinity, alignment: .leading)
-            // A hover preview must not install the system popover's window-wide
-            // dismissal region, which consumes the first click on a nearby quote.
-            .overlay(alignment: .topLeading) {
-                Group {
-                    if pillHovering || previewHovering {
-                        previewContent
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .alignmentGuide(.top) { $0[.bottom] + 6 }
-            }
-            .zIndex(1)
+            .onDisappear { showingManager = false }
         }
     }
 
     private func clearAllAttachments() {
-        closeToken = UUID()
-        pillHovering = false
-        previewHovering = false
+        showingManager = false
         store.clearSelectionAttachments()
     }
 
@@ -2542,6 +2548,12 @@ private struct AgentSelectionAttachmentPill: View {
                 .buttonStyle(WeiBeiTextActionButtonStyle())
                 .accessibilityIdentifier("agent-selection-attachment-preview-clear")
                 .help(store.ui("清空全部选区片段", "Clear all selected fragments"))
+                Button { showingManager = false } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+                .accessibilityLabel(Text(store.ui("关闭", "Close")))
+                .accessibilityIdentifier("agent-selection-attachment-close")
             }
 
             ScrollView(showsIndicators: false) {
@@ -2553,9 +2565,6 @@ private struct AgentSelectionAttachmentPill: View {
                 .background(GeometryReader { proxy in
                     Color.clear.preference(key: SelectionAttachmentPreviewHeightKey.self, value: proxy.size.height)
                 })
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-content-layout"))
-#endif
             }
             .frame(height: previewContentHeight.map { min($0, 260) })
             .frame(maxHeight: 260)
@@ -2565,20 +2574,9 @@ private struct AgentSelectionAttachmentPill: View {
                 guard height.isFinite, height > 0 else { return }
                 previewContentHeight = height
             }
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-            .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-viewport-layout"))
-#endif
         }
         .padding(12)
-        .frame(maxWidth: 360, alignment: .leading)
-        .weibeiEtchedBackground(fill: WeiBeiTheme.paperRaised,
-            stroke: WeiBeiTheme.hairline, cornerRadius: 8, contactShadow: true)
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-        .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-layout"))
-#endif
-        .onHover { value in
-            setPreviewHovering(value)
-        }
+        .background(WeiBeiTheme.paperRaised)
     }
 
     private func selectionAttachmentRow(index: Int, selection: SelectionContext) -> some View {
@@ -2593,18 +2591,14 @@ private struct AgentSelectionAttachmentPill: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Spacer(minLength: 8)
                 Button {
-                    let shouldClose = interaction.selectionAttachments.count <= 1
-                    closeToken = UUID()
+                    if interaction.selectionAttachments.count == 1 { showingManager = false }
                     store.removeSelectionAttachment(id: selection.id)
-                    if shouldClose {
-                        pillHovering = false
-                        previewHovering = false
-                    }
                 } label: {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 20))
                 .accessibilityLabel(Text(store.ui("移除片段 \(index + 1)", "Remove fragment \(index + 1)")))
+                .accessibilityIdentifier("agent-selection-fragment-remove-\(selection.id.uuidString)")
                 .help(store.ui("移除这个选区片段", "Remove this selected fragment"))
             }
 
@@ -2616,9 +2610,6 @@ private struct AgentSelectionAttachmentPill: View {
                 .allowsHitTesting(false)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 1)
-#if targetEnvironment(macCatalyst) && WEIBEI_ACCEPTANCE_CHECKS
-                .background(AccessibilityFrameProbe(identifier: "selection-attachment-preview-text-\(selection.id.uuidString)"))
-#endif
         }
         .padding(9)
         .weibeiEtchedBackground(
@@ -2629,38 +2620,6 @@ private struct AgentSelectionAttachmentPill: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func setPillHovering(_ value: Bool) {
-        if value {
-            closeToken = UUID()
-            withAnimation(WeiBeiMotion.hover) {
-                pillHovering = true
-            }
-        } else {
-            schedulePreviewClose()
-        }
-    }
-
-    private func setPreviewHovering(_ value: Bool) {
-        if value {
-            closeToken = UUID()
-            previewHovering = true
-        } else {
-            previewHovering = false
-            schedulePreviewClose()
-        }
-    }
-
-    private func schedulePreviewClose() {
-        let token = UUID()
-        closeToken = token
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            guard closeToken == token, !previewHovering else { return }
-            withAnimation(WeiBeiMotion.hover) {
-                pillHovering = false
-                previewHovering = false
-            }
-        }
-    }
 }
 
 private struct SelectionAttachmentPreviewHeightKey: PreferenceKey {
