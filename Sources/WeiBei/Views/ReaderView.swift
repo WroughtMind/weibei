@@ -421,10 +421,11 @@ private struct ReaderMaterialTabs: ViewModifier {
             }
         }
         .allowsHitTesting(showsPanel)
-        .animation(
-            reduceMotion ? nil : WeiBeiMotionTokens.easeOut.animation(transitionDuration),
-            value: hover.expandedID
-        )
+        .transaction(value: hover.expandedID) { transaction in
+            // When the frame is resizing, its animation also carries the paper strip.
+            guard !reduceMotion, !transaction.disablesAnimations, transaction.animation == nil else { return }
+            transaction.animation = WeiBeiMotionTokens.easeOut.animation(transitionDuration)
+        }
         .padding(.top, Self.stripHeight)
         .overlay(alignment: .topLeading) {
             tabStrip(materials)
