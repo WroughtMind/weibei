@@ -246,9 +246,7 @@ struct ReaderSelectionTranslationButton: View {
             store.dismissFloatingSelectionAgent()
         } label: {
             Text(store.ui("译", "Translate"))
-                .frame(minWidth: 28)
         }
-        .foregroundStyle(WeiBeiTheme.link)
         .accessibilityLabel(Text(store.ui("翻译选中文字", "Translate selected text")))
         .help(store.ui("翻译选中文字", "Translate selected text"))
     }

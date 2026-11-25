@@ -1,5 +1,6 @@
 #if targetEnvironment(macCatalyst)
 import UIKit
+import WebKit
 typealias SelectionPlatformView = UIView
 #else
 import AppKit
@@ -10,9 +11,25 @@ import WeiBeiCore
 enum SelectionAnchorContentPoint {
     static func fromWebPayload(_ payload: [String: Any]?, in view: SelectionPlatformView?) -> SelectionPopoverAnchor? {
         guard let payload, let view, let x = payload["x"] as? Double, let y = payload["y"] as? Double,
-              x.isFinite, y.isFinite,
-              var result = fromWebPoint(x: x, y: y, prefersAbove: payload["prefersAbove"] as? Bool == true, in: view) else { return nil }
-        if let height = payload["height"] as? Double, height.isFinite, height > 0 { result.selectionHeight = height }
+              x.isFinite, y.isFinite else { return nil }
+        var point = CGPoint(x: x, y: y)
+        var scale: CGFloat = 1
+#if targetEnvironment(macCatalyst)
+        if let scrollView = (view as? WKWebView)?.scrollView,
+           let scrollX = payload["scrollX"] as? Double, let scrollY = payload["scrollY"] as? Double,
+           scrollX.isFinite, scrollY.isFinite {
+            // The browser reports viewport coordinates. Map through the native scroll view
+            // so the selection includes the actual toolbar inset and page scale.
+            scale = scrollView.zoomScale
+            let documentPoint = CGPoint(x: (x + scrollX) * scale, y: (y + scrollY) * scale)
+            point = scrollView.convert(documentPoint, to: view)
+        }
+#endif
+        guard var result = fromWebPoint(x: point.x, y: point.y,
+            prefersAbove: payload["prefersAbove"] as? Bool == true, in: view) else { return nil }
+        if let height = payload["height"] as? Double, height.isFinite, height > 0 {
+            result.selectionHeight = height * scale
+        }
         if let anchor = payload["anchor"] as? [String: Any],
            let start = anchor["startOffset"] as? Int, let end = anchor["endOffset"] as? Int,
            start >= 0, end > start {

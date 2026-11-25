@@ -1244,11 +1244,12 @@ public enum SelectionFloatingAgentPlacement {
         surfaceHalfWidth: Double = expandedHalfWidth,
         measuredHalfHeight: Double? = nil,
         prefersAbove: Bool = false,
-        prefersAnchorCenter: Bool = false
+        prefersAnchorCenter: Bool = false,
+        selectionHeight: Double = 0
     ) -> FloatingAgentCoordinate {
         let edgePadding = 18.0
         let anchorGap = 12.0
-        let verticalGap = prefersAnchorCenter ? 10.0 : 14.0
+        let verticalGap = prefersAnchorCenter ? 6.0 : 14.0
         let contentCanvas = FloatingAgentCoordinate(x: canvas.x, y: max(1, canvas.y - topInset))
         let isExpanded = surfaceHalfWidth >= expandedHalfWidth - 0.5
         let surfaceHalfHeight = measuredHalfHeight ?? (isExpanded ? expandedHalfHeight : compactHalfHeight)
@@ -1275,8 +1276,8 @@ public enum SelectionFloatingAgentPlacement {
         let maximumY = contentCanvas.y - surfaceHalfHeight - edgePadding
         let besideText = !prefersAnchorCenter && (rightSideX <= maximumX || leftSideX >= minimumX)
         let distance = besideText ? max(0, surfaceHalfHeight - 38) : surfaceHalfHeight + verticalGap
-        let belowY = anchor.y + distance
-        let aboveY = anchor.y - distance
+        let belowY = anchor.y + (prefersAbove ? selectionHeight : 0) + distance
+        let aboveY = anchor.y - (prefersAbove ? 0 : selectionHeight) - distance
         let preferredY: Double
         if prefersAbove, aboveY >= minimumY {
             preferredY = aboveY

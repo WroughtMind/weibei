@@ -4098,6 +4098,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
             x: rect?.x ?? null,
             y: rect?.y ?? null,
             height: rect?.height ?? null,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY,
             prefersAbove: rect?.prefersAbove ?? false,
             anchor: text ? WeiBeiSelection.domSelectionTextAnchor(selection, document.body) : null,
             loadToken: readerLoadToken()
