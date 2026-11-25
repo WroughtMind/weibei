@@ -57,6 +57,8 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     @ViewBuilder var actions: () -> Actions
 
     @State private var visible = false
+    @State private var hoveringProbe = false
+    @State private var hoveringTitle = false
     @State private var hideTask: DispatchWorkItem?
     @FocusState private var titleFieldFocused: Bool
     /// 重命名文本框是否仍在视图树里（@State 在逃逸闭包里读到的是实时值，
@@ -94,26 +96,27 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         // parent uses .overlay(alignment: .top). The probe itself must not claim clicks:
         // imported HTML often puts theme / chrome buttons in this same 36pt band.
         ZStack(alignment: .top) {
-            HoverPassThroughRegion(onHoverChange: updateVisibility)
+            HoverPassThroughRegion(onHoverChange: updateProbeHover)
                 .frame(maxWidth: .infinity)
                 .frame(height: 36)
                 .padding(.top, readerTabHover == nil ? 0 : ReaderMaterialTabs.stripHeight)
 
             if let readerTabHover {
-                titleControls
+                readerTitleControls
                     .contentShape(Rectangle())
-                    .modifier(PaneHeaderReorderModifier(role: reorderRole))
+                    .modifier(PaneHeaderReorderModifier(role: reorderRole, liftsContent: false))
                     .modifier(ReaderMaterialTabs(
                         hover: readerTabHover,
                         showsTitle: showsTitle,
-                        onTitleHover: updateVisibility
+                        onTitleHover: updateTitleHover
                     ))
             } else if showsTitle {
                 titleControls
+                    .frame(height: 34)
                     .modifier(material)
                     .padding(.top, 7)
                     .contentShape(Rectangle())
-                    .onHover(perform: updateVisibility)
+                    .onHover(perform: updateTitleHover)
                     // 编辑期间禁用整条拖拽重排，避免高优先级 DragGesture 劫持文本框内的点选。
                     .modifier(PaneHeaderReorderModifier(role: titleRename?.isEditing == true ? nil : reorderRole))
                     .transition(.opacity)
@@ -130,6 +133,32 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         .onDisappear {
             hideTask?.cancel()
         }
+    }
+
+    private var readerTitleControls: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 8) {
+                ViewThatFits(in: .horizontal) {
+                    hoverMark
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .layoutPriority(1)
+                if !title.isEmpty {
+                    Text(title)
+                        .weiBeiText(12, weight: .medium)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(title)
+                }
+            }
+            .padding(.trailing, 8)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
+            actions()
+                .layoutPriority(1)
+        }
+        .padding(.horizontal, ImmersiveTitleMaterial.contentInset)
     }
 
     private var titleControls: some View {
@@ -158,7 +187,16 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
             actions()
         }
         .padding(.horizontal, ImmersiveTitleMaterial.contentInset)
-        .frame(height: 34)
+    }
+
+    private func updateProbeHover(_ hovering: Bool) {
+        hoveringProbe = hovering
+        updateVisibility(hovering || hoveringTitle)
+    }
+
+    private func updateTitleHover(_ hovering: Bool) {
+        hoveringTitle = hovering
+        updateVisibility(hovering || hoveringProbe)
     }
 
     private func updateVisibility(_ hovering: Bool) {
@@ -298,9 +336,36 @@ final class ReaderMaterialTabHover {
     }
 }
 
+private struct ReaderTitlePanelLayout: Layout {
+    let closeSize: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let controls = subviews.first else { return .zero }
+        let idealWidth = controls.sizeThatFits(.unspecified).width
+        let width = min(idealWidth, max(0, proposal.width ?? idealWidth))
+        let controlSize = controls.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        return CGSize(width: width, height: max(34, max(controlSize.height, closeSize) + 8))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(
+            at: CGPoint(x: bounds.minX, y: bounds.midY),
+            anchor: .leading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+        )
+    }
+}
+
 @MainActor
 private struct ReaderMaterialTabs: ViewModifier {
     static let stripHeight: CGFloat = 29
+    static let compactControlSize: CGFloat = 24
+    private static let paperWidth: CGFloat = 34
+
+    static func minimumPaneWidth(textScale: CGFloat) -> CGFloat {
+        let inset = ImmersiveTitleMaterial.cornerRadius + ImmersiveTitleMaterial.contentInset
+        return max(paperWidth, compactControlSize * textScale) + 2 * inset
+    }
 
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
@@ -308,8 +373,9 @@ private struct ReaderMaterialTabs: ViewModifier {
     let hover: ReaderMaterialTabHover
     let showsTitle: Bool
     let onTitleHover: (Bool) -> Void
-    private let paperWidth: CGFloat = 34
     private let exposedWidth: CGFloat = 18
+    private let closeTrailingInset: CGFloat = 5
+    private let titleSpacing: CGFloat = 3
 
     private var material: ImmersiveTitleMaterial {
         ImmersiveTitleMaterial(isDark: store.appearanceMode.isDark)
@@ -321,36 +387,28 @@ private struct ReaderMaterialTabs: ViewModifier {
         let showsControls = showsTitle && !store.materialPickerPresented && store.selectedMaterialItem != nil
         let showsPanel = showsControls || unfolded != nil
 
-        // The actual READ controls determine the shared frame. The current
-        // material's title also gets room, and hovering other tabs cannot resize
-        // or recenter the frame because their content is drawn in its overlay.
-        ZStack(alignment: .leading) {
+        // The toolbar sizes the panel on each layout pass. Tab previews draw in
+        // its overlay so previewing a different title can't move the paper strip.
+        ReaderTitlePanelLayout(closeSize: Self.compactControlSize * textScale) {
             content
                 .opacity(showsControls && unfolded == nil ? 1 : 0)
                 .allowsHitTesting(showsControls && unfolded == nil)
                 .accessibilityHidden(!showsControls || unfolded != nil)
-            if let current = store.selectedMaterialItem ?? materials.first {
-                paperControls(current, fillsPanel: false)
-                    .hidden()
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
         }
-        .frame(height: max(34, 24 * textScale + 8))
-        .overlay(alignment: .leading) {
+        .overlay {
             if let unfolded {
-                paperControls(unfolded, fillsPanel: true)
+                paperControls(unfolded)
                     .transition(reduceMotion ? .opacity : .offset(y: -3).combined(with: .opacity))
             }
         }
+        .clipped()
         .modifier(material)
         .opacity(showsPanel ? 1 : 0)
         .contentShape(Rectangle())
         .onHover { hovering in
+            onTitleHover(hovering)
             if let unfolded {
                 hover.update(hovering, itemID: unfolded.id, in: .unfolded)
-            } else {
-                onTitleHover(hovering)
             }
         }
         .allowsHitTesting(showsPanel)
@@ -367,19 +425,26 @@ private struct ReaderMaterialTabs: ViewModifier {
     }
 
     private func tabStrip(_ materials: [StudyItem]) -> some View {
-        ScrollViewReader { scroll in
-            ScrollView(.horizontal) {
-                HStack(alignment: .bottom, spacing: 0) {
-                    ForEach(Array(materials.enumerated()), id: \.element.id) { index, item in
-                        compactPaper(item, index: index, isLast: index == materials.count - 1)
-                            .id(item.id)
+        GeometryReader { viewport in
+            ScrollViewReader { scroll in
+                ScrollView(.horizontal) {
+                    HStack(alignment: .bottom, spacing: 0) {
+                        ForEach(Array(materials.enumerated()), id: \.element.id) { index, item in
+                            compactPaper(item, index: index, isLast: index == materials.count - 1)
+                                .id(item.id)
+                        }
+                    }
+                    .frame(height: Self.stripHeight, alignment: .bottom)
+                }
+                .scrollIndicators(.hidden)
+                .onChange(of: store.selectedItemID, initial: true) { _, id in
+                    if let id { scroll.scrollTo(id) }
+                }
+                .onChange(of: viewport.size.width) { previous, width in
+                    if width < previous, let id = hover.expandedID ?? store.selectedItemID {
+                        scroll.scrollTo(id)
                     }
                 }
-                .frame(height: Self.stripHeight, alignment: .bottom)
-            }
-            .scrollIndicators(.hidden)
-            .onChange(of: store.selectedItemID, initial: true) { _, id in
-                if let id { scroll.scrollTo(id) }
             }
         }
         .frame(height: Self.stripHeight)
@@ -396,10 +461,10 @@ private struct ReaderMaterialTabs: ViewModifier {
         } label: {
             // Each overlapping sheet has its own non-overlapping pointer target.
             Color.clear
-                .frame(width: isLast ? paperWidth : exposedWidth, height: height)
+                .frame(width: isLast ? Self.paperWidth : exposedWidth, height: height)
                 .background(alignment: .bottomLeading) {
                     ReaderMaterialPaper(material: material, isSelected: selected)
-                        .frame(width: paperWidth, height: height)
+                        .frame(width: Self.paperWidth, height: height)
                         .allowsHitTesting(false)
                 }
                 .contentShape(Rectangle())
@@ -414,24 +479,30 @@ private struct ReaderMaterialTabs: ViewModifier {
         .onHover { hover.update($0, itemID: item.id, in: .stack) }
     }
 
-    private func paperControls(_ item: StudyItem, fillsPanel: Bool) -> some View {
+    private func paperControls(_ item: StudyItem) -> some View {
         let title = store.displayTitle(for: item)
         let label = closeLabel(for: title)
-        return HStack(spacing: 3) {
+        let titleFontSize: CGFloat = 12
+        let minimumTitleWidth = titleFontSize * textScale
+        return HStack(spacing: titleSpacing) {
             Button {
                 store.selectReaderTab(item.id)
             } label: {
-                Text(title)
-                    .weiBeiText(12, weight: .medium)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.leading, ImmersiveTitleMaterial.contentInset)
-                    .frame(maxWidth: fillsPanel ? .infinity : nil, alignment: .leading)
-                    .frame(height: 34)
-                    .contentShape(Rectangle())
+                ViewThatFits(in: .horizontal) {
+                    Text(title)
+                        .weiBeiText(titleFontSize, weight: .medium)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(minWidth: minimumTitleWidth, idealWidth: minimumTitleWidth)
+                    Color.clear
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .padding(.leading, ImmersiveTitleMaterial.contentInset)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .accessibilityLabel(title)
             .help(title + "\n" + store.displaySubtitle(for: item))
 
             Button {
@@ -440,10 +511,10 @@ private struct ReaderMaterialTabs: ViewModifier {
                 Image(systemName: "xmark")
                     .weiBeiText(8.5, weight: .semibold)
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .buttonStyle(WeiBeiIconButtonStyle(size: Self.compactControlSize))
             .accessibilityLabel(label)
             .help(label)
-            .padding(.trailing, 5)
+            .padding(.trailing, closeTrailingInset)
             .layoutPriority(1)
         }
     }
@@ -508,6 +579,7 @@ private struct ReaderMaterialPaperShape: Shape {
 
 struct ReaderView: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @Environment(\.weiBeiTextScale) private var textScale
     var isImmersive = false
     var showsFloatingTitle = false
     var floatingTitleReorderRole: WorkspacePaneRole? = nil
@@ -694,15 +766,7 @@ struct ReaderView: View {
                     reorderRole: floatingTitleReorderRole,
                     readerTabHover: hasReaderPaperTabs ? materialTabHover : nil
                 ) {
-                    HStack(spacing: 8) {
-                        ContextualContentListButton(kind: .material)
-                        selectionAskThreadsMenu
-                        if let item = store.selectedMaterialItem,
-                           !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
-                            ExcerptBookButton(itemID: item.id)
-                        }
-                        importedDocumentAdaptationControl
-                    }
+                    readerTitleActions
                 }
                 .padding(.horizontal, ImmersiveTitleMaterial.cornerRadius)
             }
@@ -827,19 +891,11 @@ struct ReaderView: View {
     }
 
     private var floatingTitle: String {
-        guard let item = store.selectedMaterialItem else { return "" }
-        if item.kind == .pdf {
-            return store.ui("第 \(pdfPageIndex + 1) 页", "Page \(pdfPageIndex + 1)")
-        }
-        let locationTitle = store.currentReferenceTitle
-        return locationTitle == store.displayTitle(for: item) ? "" : locationTitle
+        store.currentReferenceTitle
     }
 
     private var canShowReaderTitle: Bool {
-        showsFloatingTitle && !ContentRailMetrics.isRailOnly(
-            availableWidth: measuredPaneSize.width,
-            allowed: supportsContentRail && !isImmersive
-        )
+        showsFloatingTitle && measuredPaneSize.width >= ReaderMaterialTabs.minimumPaneWidth(textScale: textScale)
     }
 
     private var hasReaderPaperTabs: Bool {
@@ -1127,21 +1183,65 @@ struct ReaderView: View {
         return 4
     }
 
+    private var readerTitleActions: some View {
+        let excerpt = store.selectedMaterialItem.flatMap { store.selectionRemarkRecords(forItemID: $0.id).first }
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                ContextualContentListButton(kind: .material)
+                selectionAskThreadsMenu
+                if let excerpt {
+                    ExcerptBookButton(itemID: excerpt.itemID)
+                }
+                importedDocumentAdaptationControl
+            }
+            .fixedSize(horizontal: true, vertical: false)
+
+            Menu {
+                Button {
+                    store.showContextualBrowser(.material)
+                } label: {
+                    Label(store.ui("选择其他资料", "Choose another material"), systemImage: "list.bullet")
+                }
+                selectionAskThreadsMenu
+                if let excerpt {
+                    Button {
+                        store.openExcerptBook(courseID: store.excerptCourseID(for: excerpt), at: excerpt.id)
+                    } label: {
+                        Label(store.ui("本篇摘抄", "Document excerpts"), systemImage: "text.book.closed")
+                    }
+                }
+                if supportsImportedDocumentColorAdaptation {
+                    Button(action: toggleDocumentColors) {
+                        Label(importedDocumentAdaptationLabel, systemImage: "eyeglasses")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(WeiBeiIconButtonStyle(size: ReaderMaterialTabs.compactControlSize))
+            .accessibilityLabel(store.ui("阅读工具", "Reading tools"))
+            .help(store.ui("阅读工具", "Reading tools"))
+        }
+    }
+
     @ViewBuilder
     private var importedDocumentAdaptationControl: some View {
         if supportsImportedDocumentColorAdaptation {
-            Button {
-                withAnimation(WeiBeiMotion.appearance) {
-                    // R11: HTML/Office shares the PDF's persisted global preference
-                    // instead of a per-document local that resets on every switch.
-                    store.toggleImportedDocumentColorAdaptation()
-                }
-            } label: {
+            Button(action: toggleDocumentColors) {
                 Image(systemName: "eyeglasses")
             }
             .buttonStyle(WeiBeiIconButtonStyle(active: adaptsSelectedDocumentColors, size: 22))
             .accessibilityLabel(Text(importedDocumentAdaptationLabel))
             .help(importedDocumentAdaptationLabel)
+        }
+    }
+
+    private func toggleDocumentColors() {
+        // The PDF and HTML/Office readers share the same saved preference.
+        withAnimation(WeiBeiMotion.appearance) {
+            store.toggleImportedDocumentColorAdaptation()
         }
     }
 
