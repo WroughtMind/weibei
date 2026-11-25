@@ -86,7 +86,9 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                         ViewThatFits(in: .horizontal) {
                             HStack(alignment: .firstTextBaseline, spacing: 9) {
                                 hoverMark
-                                titleView
+                                if !title.isEmpty {
+                                    titleView
+                                }
                             }
                             .fixedSize(horizontal: true, vertical: false)
                             hoverMark
@@ -226,6 +228,130 @@ extension ImmersiveHoverTitleView where Actions == EmptyView {
     }
 }
 
+private struct ReaderMaterialTabs: ViewModifier {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
+    private let horizontalInset: CGFloat = 10
+    let isVisible: Bool
+
+    func body(content: Content) -> some View {
+        VStack(spacing: 0) {
+            if isVisible {
+                let materials = store.readerTabMaterials
+                if !materials.isEmpty { tabStrip(materials) }
+            }
+            content
+        }
+    }
+
+    private func tabStrip(_ materials: [StudyItem]) -> some View {
+        HStack(spacing: 0) {
+            GeometryReader { viewport in
+                let tabWidth = min(212 * textScale, max(1, viewport.size.width - horizontalInset * 2))
+                ScrollViewReader { scroll in
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .bottom, spacing: 5) {
+                            ForEach(materials) { item in
+                                let title = store.displayTitle(for: item)
+                                ReaderMaterialTab(
+                                    title: title,
+                                    help: title + "\n" + store.displaySubtitle(for: item),
+                                    closeLabel: store.ui("关闭\(title)", "Close \(title)"),
+                                    isSelected: item.id == store.selectedItemID,
+                                    maximumWidth: tabWidth,
+                                    select: { store.selectReaderTab(item.id) },
+                                    close: { store.closeReaderTab(item.id) }
+                                )
+                                .id(item.id)
+                            }
+                        }
+                        .padding(.horizontal, horizontalInset)
+                        .frame(height: 36 * textScale, alignment: .bottom)
+                    }
+                    .onChange(of: store.selectedItemID, initial: true) { _, id in
+                        if let id {
+                            scroll.scrollTo(id)
+                        }
+                    }
+                }
+            }
+            if store.selectedMaterialItem != nil, !store.materialPickerPresented {
+                ContextualContentListButton(kind: .material)
+                    .padding(.trailing, 8)
+            }
+        }
+        .frame(height: 36 * textScale)
+        .background(alignment: .bottom) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.55))
+                .frame(height: 1)
+        }
+        .background(WeiBeiTheme.paper)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(store.ui("已打开的资料", "Open materials"))
+    }
+}
+
+private struct ReaderMaterialTab: View {
+    @Environment(\.weiBeiTextScale) private var textScale
+    @State private var hovering = false
+    let title: String
+    let help: String
+    let closeLabel: String
+    let isSelected: Bool
+    let maximumWidth: CGFloat
+    let select: () -> Void
+    let close: () -> Void
+
+    private var shape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: 7, topTrailingRadius: 9)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: select) {
+                Text(title)
+                    .weiBeiText(12, weight: isSelected ? .semibold : .medium)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 3)
+                    .frame(height: (isSelected ? 31 : 27) * textScale)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isSelected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .help(help)
+
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .weiBeiText(8.5, weight: .semibold)
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .accessibilityLabel(closeLabel)
+            .help(closeLabel)
+            .padding(.trailing, 2)
+            .layoutPriority(1)
+        }
+        .frame(maxWidth: maximumWidth, alignment: .leading)
+        .background {
+            shape
+                .fill(isSelected ? WeiBeiTheme.paperRaised : WeiBeiTheme.paperInset.opacity(hovering ? 0.94 : 0.55))
+                .overlay {
+                    if isSelected { shape.fill(WeiBeiTheme.accentSoft) }
+                }
+                .overlay {
+                    shape.strokeBorder(
+                        isSelected ? WeiBeiTheme.accent.opacity(hovering ? 0.63 : 0.40) : WeiBeiTheme.hairline.opacity(0.62),
+                        lineWidth: 1
+                    )
+                }
+        }
+        .onHover { hovering = $0 }
+    }
+}
+
 struct ReaderView: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     var isImmersive = false
@@ -334,7 +460,6 @@ struct ReaderView: View {
                     reorderRole: floatingTitleReorderRole
                 ) {
                     HStack(spacing: 8) {
-                        ContextualContentListButton(kind: .material)
                         selectionAskThreadsMenu
                         if let item = store.selectedMaterialItem,
                            !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
@@ -424,6 +549,10 @@ struct ReaderView: View {
         .foregroundStyle(Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.feedback, value: pdfBrowseMode)
         .animation(WeiBeiMotion.visibility(pdfHasSelectableText != false), value: pdfHasSelectableText)
+        .modifier(ReaderMaterialTabs(isVisible: showsFloatingTitle && !ContentRailMetrics.isRailOnly(
+            availableWidth: measuredPaneSize.width,
+            allowed: supportsContentRail && !isImmersive
+        )))
     }
 
     var body: some View {
@@ -544,7 +673,12 @@ struct ReaderView: View {
     }
 
     private var floatingTitle: String {
-        store.currentReferenceTitle
+        guard let item = store.selectedMaterialItem else { return "" }
+        if item.kind == .pdf {
+            return store.ui("第 \(pdfPageIndex + 1) 页", "Page \(pdfPageIndex + 1)")
+        }
+        let locationTitle = store.currentReferenceTitle
+        return locationTitle == store.displayTitle(for: item) ? "" : locationTitle
     }
 
     private var supportsContentRail: Bool {
