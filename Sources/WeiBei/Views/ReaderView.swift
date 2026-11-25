@@ -321,7 +321,7 @@ final class ReaderMaterialTabHover {
             foldTask?.cancel()
             foldTask = Task { @MainActor [weak self] in
                 // Give the pointer time to cross from the exposed edge onto the paper.
-                try? await Task.sleep(for: .milliseconds(110))
+                try? await Task.sleep(for: .milliseconds(80))
                 guard !Task.isCancelled else { return }
                 self?.dismiss()
             }
@@ -356,6 +356,14 @@ private struct ReaderTitlePanelLayout: Layout {
     }
 }
 
+private struct ReaderTitlePanelContent: Equatable {
+    let title: String
+    let askedCount: Int
+    let showsExcerpts: Bool
+    let showsDocumentColors: Bool
+    let textScale: CGFloat
+}
+
 @MainActor
 private struct ReaderMaterialTabs: ViewModifier {
     static let stripHeight: CGFloat = 29
@@ -386,6 +394,7 @@ private struct ReaderMaterialTabs: ViewModifier {
         let unfolded = materials.first { $0.id == hover.expandedID }
         let showsControls = showsTitle && !store.materialPickerPresented && store.selectedMaterialItem != nil
         let showsPanel = showsControls || unfolded != nil
+        let transitionDuration = unfolded == nil ? WeiBeiMotionTokens.durationControl : WeiBeiMotionTokens.durationSmExit
 
         // The toolbar sizes the panel on each layout pass. Tab previews draw in
         // its overlay so previewing a different title can't move the paper strip.
@@ -412,7 +421,10 @@ private struct ReaderMaterialTabs: ViewModifier {
             }
         }
         .allowsHitTesting(showsPanel)
-        .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hover.expandedID)
+        .animation(
+            reduceMotion ? nil : WeiBeiMotionTokens.easeOut.animation(transitionDuration),
+            value: hover.expandedID
+        )
         .padding(.top, Self.stripHeight)
         .overlay(alignment: .topLeading) {
             tabStrip(materials)
@@ -759,15 +771,31 @@ struct ReaderView: View {
         .animation(WeiBeiMotion.visibility(pdfHasSelectableText != false), value: pdfHasSelectableText)
         .overlay(alignment: .top) {
             if hasReaderPaperTabs || (canShowReaderTitle && store.selectedMaterialItem != nil && !store.materialPickerPresented) {
+                let itemID = store.selectedMaterialItem?.id
+                let asked = store.markedSelectionAskThreads(forItemID: itemID)
+                let excerpt = itemID.flatMap { store.selectionRemarkRecords(forItemID: $0).first }
+                let panelContent = ReaderTitlePanelContent(
+                    title: floatingTitle,
+                    askedCount: asked.count,
+                    showsExcerpts: excerpt != nil,
+                    showsDocumentColors: supportsImportedDocumentColorAdaptation,
+                    textScale: textScale
+                )
                 ImmersiveHoverTitleView(
                     mark: "READ",
-                    title: floatingTitle,
+                    title: panelContent.title,
                     appearanceMode: store.appearanceMode,
                     reorderRole: floatingTitleReorderRole,
                     readerTabHover: hasReaderPaperTabs ? materialTabHover : nil
                 ) {
-                    readerTitleActions
+                    readerTitleActions(asked: asked, excerpt: excerpt, showsDocumentColors: panelContent.showsDocumentColors)
                 }
+                // Content changes ease the shared frame and its paper strip together.
+                // Divider movement stays driven by the live width proposal.
+                .animation(
+                    reduceMotion ? nil : WeiBeiMotionTokens.easeOutStrong.animation(WeiBeiMotionTokens.durationSm),
+                    value: panelContent
+                )
                 .padding(.horizontal, ImmersiveTitleMaterial.cornerRadius)
             }
         }
@@ -1183,16 +1211,23 @@ struct ReaderView: View {
         return 4
     }
 
-    private var readerTitleActions: some View {
-        let excerpt = store.selectedMaterialItem.flatMap { store.selectionRemarkRecords(forItemID: $0.id).first }
-        return ViewThatFits(in: .horizontal) {
+    private func readerTitleActions(
+        asked: [SelectionAskThread],
+        excerpt: SelectionRemarkRecord?,
+        showsDocumentColors: Bool
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
                 ContextualContentListButton(kind: .material)
-                selectionAskThreadsMenu
+                selectionAskThreadsMenu(asked)
                 if let excerpt {
                     ExcerptBookButton(itemID: excerpt.itemID)
+                        .transition(readerToolTransition)
                 }
-                importedDocumentAdaptationControl
+                if showsDocumentColors {
+                    importedDocumentAdaptationControl
+                        .transition(readerToolTransition)
+                }
             }
             .fixedSize(horizontal: true, vertical: false)
 
@@ -1202,7 +1237,7 @@ struct ReaderView: View {
                 } label: {
                     Label(store.ui("选择其他资料", "Choose another material"), systemImage: "list.bullet")
                 }
-                selectionAskThreadsMenu
+                selectionAskThreadsMenu(asked)
                 if let excerpt {
                     Button {
                         store.openExcerptBook(courseID: store.excerptCourseID(for: excerpt), at: excerpt.id)
@@ -1210,7 +1245,7 @@ struct ReaderView: View {
                         Label(store.ui("本篇摘抄", "Document excerpts"), systemImage: "text.book.closed")
                     }
                 }
-                if supportsImportedDocumentColorAdaptation {
+                if showsDocumentColors {
                     Button(action: toggleDocumentColors) {
                         Label(importedDocumentAdaptationLabel, systemImage: "eyeglasses")
                     }
@@ -1226,16 +1261,20 @@ struct ReaderView: View {
         }
     }
 
-    @ViewBuilder
+    private var readerToolTransition: AnyTransition {
+        guard !reduceMotion else { return .identity }
+        let fade = WeiBeiMotionTokens.easeOut.animation(WeiBeiMotionTokens.durationControl)
+        // Start fading new tools in after the panel begins widening.
+        return .asymmetric(insertion: .opacity.animation(fade.delay(0.04)), removal: .opacity.animation(fade))
+    }
+
     private var importedDocumentAdaptationControl: some View {
-        if supportsImportedDocumentColorAdaptation {
-            Button(action: toggleDocumentColors) {
-                Image(systemName: "eyeglasses")
-            }
-            .buttonStyle(WeiBeiIconButtonStyle(active: adaptsSelectedDocumentColors, size: 22))
-            .accessibilityLabel(Text(importedDocumentAdaptationLabel))
-            .help(importedDocumentAdaptationLabel)
+        Button(action: toggleDocumentColors) {
+            Image(systemName: "eyeglasses")
         }
+        .buttonStyle(WeiBeiIconButtonStyle(active: adaptsSelectedDocumentColors, size: 22))
+        .accessibilityLabel(Text(importedDocumentAdaptationLabel))
+        .help(importedDocumentAdaptationLabel)
     }
 
     private func toggleDocumentColors() {
@@ -1247,8 +1286,7 @@ struct ReaderView: View {
 
     /// Top-chrome entry for past selection-ask threads (replaces the mid-document legend overlay).
     @ViewBuilder
-    private var selectionAskThreadsMenu: some View {
-        let threads = store.markedSelectionAskThreads(forItemID: store.selectedMaterialItem?.id)
+    private func selectionAskThreadsMenu(_ threads: [SelectionAskThread]) -> some View {
         if !threads.isEmpty {
             Menu {
                 ForEach(threads) { thread in
@@ -1282,6 +1320,7 @@ struct ReaderView: View {
             .fixedSize(horizontal: true, vertical: false)
             .help(store.ui("打开已问选区列表", "Open asked-selection list"))
             .accessibilityLabel(Text(store.ui("已问选区", "Asked selections")))
+            .transition(readerToolTransition)
         }
     }
 
