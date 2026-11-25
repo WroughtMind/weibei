@@ -274,6 +274,7 @@ struct ReaderSelectionTranslationButton: View {
             .weiBeiText(12)
             .padding(14)
             .frame(width: 320, alignment: .leading)
+            .environmentObject(store)
             .task(id: SelectionRequest(selection: selection, service: service, attempt: attempt)) {
                 result = nil
                 guard let service else { result = .failure(.missingConnection); return }

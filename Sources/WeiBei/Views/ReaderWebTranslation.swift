@@ -146,9 +146,14 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
     static let startScript = #"""
     globalThis.weiBeiReaderTranslation?.stop();
     const translationTag = 'weibei-reader-translation';
-    const blocks = 'p,h1,h2,h3,h4,h5,h6,li,dt,dd,figcaption,blockquote' + (rootSelector === 'body' ? ',div' : '');
-    const excluded = 'nav,footer,aside,pre,code,table,form,[hidden],[aria-hidden="true"]';
+    const slideSelector = '[data-slide-index]';
+    const office = rootSelector === '#office-document';
+    const blocks = 'p,h1,h2,h3,h4,h5,h6,li,dt,dd,figcaption,blockquote,td,th,caption'
+      + (office ? ',' + slideSelector : rootSelector === 'body' ? ',div' : '');
+    const excluded = 'nav,footer,aside:not(.office-note),pre,code,form,[hidden],[aria-hidden="true"],'
+      + '[role="status"],[role="alert"],[data-weibei-annotation-ui]';
     const ids = new WeakMap();
+    const slideText = new WeakMap();
     const translations = new Map();
     const elements = new Map();
     const observed = new Set();
@@ -162,7 +167,17 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
       return element.matches('li') ? element.querySelector(':scope > ul, :scope > ol') : null;
     }
 
+    function isSlide(element) {
+      return office && element.matches(slideSelector);
+    }
+
     function textOf(element) {
+      if (isSlide(element)) {
+        const source = element.firstElementChild?.querySelector('[data-weibei-location$=".xml"]');
+        if (source) slideText.set(element, source.innerText.trim());
+        // Slide wrappers persist when the renderer unloads offscreen artwork.
+        return slideText.get(element) || '';
+      }
       if (nestedList(element)) {
         return Array.from(element.childNodes).map(node => {
           if (node.nodeType === Node.TEXT_NODE) return node.textContent;
@@ -175,6 +190,8 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
 
     function isParagraph(element) {
       if (element.closest(excluded)) return false;
+      if (isSlide(element)) return true;
+      if (office && element.closest(slideSelector) && !element.closest('.office-note-body')) return false;
       if (!nestedList(element)) return !element.querySelector(blocks);
       return !Array.from(element.children).some(child =>
         !child.matches('ul,ol') && (child.matches(blocks) || child.querySelector(blocks)));
@@ -301,7 +318,11 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
             host.style.setProperty('display', 'block', 'important');
             host.attachShadow({ mode: 'closed' }).append(document.createTextNode(translation));
             translations.set(element, { source, host });
-            if (element.matches('li')) element.insertBefore(host, nestedList(element));
+            if (isSlide(element)) {
+              host.style.contain = 'inline-size';
+              host.style.paddingInline = 'min(4vw, 24px)';
+              element.append(host);
+            } else if (element.matches('li,td,th,caption')) element.insertBefore(host, nestedList(element));
             else element.after(host);
             applied.push(id);
           }

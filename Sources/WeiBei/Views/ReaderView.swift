@@ -269,6 +269,7 @@ struct ReaderView: View {
     @State private var markdownSnapshotRevision: UInt64?
     @State private var markdownSnapshotText: String?
     @State private var markdownSnapshotFailed = false
+    @State private var plainTextPosition = ReaderPlainTextPosition()
     private var translationPreferences = ReaderTranslationPreferences()
     @State private var translationMenuPresented = false
     @State private var bilingualMaterialID: String?
@@ -292,7 +293,7 @@ struct ReaderView: View {
 
     private var supportsBilingualReading: Bool {
         guard let item = store.selectedMaterialItem, item.url != nil else { return false }
-        return (item.kind == .pdf && !pdfDocumentUnreadable) || item.kind == .html || item.kind == .markdown
+        return item.kind != .pdf || !pdfDocumentUnreadable
     }
 
     private var bilingualEnabled: Bool {
@@ -372,6 +373,13 @@ struct ReaderView: View {
     }
 
     private func setBilingualReading(_ enabled: Bool) {
+        if store.selectedMaterialItem?.kind == .text {
+            if enabled {
+                plainTextPosition.offset = plainTextPosition.captureNativeOffset?() ?? plainTextPosition.offset
+                plainTextPosition.openingOffset = plainTextPosition.offset
+            }
+            store.updateSelection("", source: .document)
+        }
         bilingualMaterialID = enabled ? store.selectedMaterialItem?.id : nil
         pdfTranslationResult = nil
         pdfTranslationPage = nil
@@ -427,16 +435,29 @@ struct ReaderView: View {
                 .allowsHitTesting(!showsBilingualPage)
                 .accessibilityHidden(showsBilingualPage)
 
-                if let bilingualPage {
+                if let bilingualPage, let item = store.selectedMaterialItem {
                     ReaderPDFBilingualPage(
                         page: bilingualPage,
                         translations: currentPDFTranslation?.translations ?? [:],
                         status: translationStatus,
                         horizontalInset: min(24, availableWidth * 0.06),
+                        appearanceMode: store.appearanceMode,
+                        isActive: showsBilingualPage,
                         visibleParagraphID: Binding(
                             get: { bilingualPDFParagraphPositions[bilingualPage.index] },
                             set: { if let id = $0 { bilingualPDFParagraphPositions[bilingualPage.index] = id } }
                         ),
+                        onSelectionChange: { text, anchor, source in
+                            guard store.selectedMaterialItem?.id == item.id else { return }
+                            let title = store.displayTitle(for: item)
+                            let number = bilingualPage.index + 1
+                            store.updateSelection(
+                                text, source: .document, anchor: anchor,
+                                ownerTitle: store.ui("\(title)，第 \(number) 页", "\(title), page \(number)"),
+                                isEditable: false,
+                                documentAnchor: source.map { SelectionDocumentAnchor(pdf: $0) }
+                            )
+                        },
                         retry: retryTranslation
                     )
                     .id(bilingualPage.index)
@@ -456,6 +477,16 @@ struct ReaderView: View {
                     .padding(.trailing, isImmersive ? 18 : 10)
                     .padding(.bottom, isImmersive ? 18 : 12)
                     .transition(WeiBeiTransition.floating)
+            } else if !railOnly, supportsBilingualReading {
+                translationMenu(showsLabel: true)
+                    .padding(3)
+                    .weibeiEtchedBackground(
+                        fill: WeiBeiTheme.paperRaised,
+                        stroke: WeiBeiTheme.hairline.opacity(0.24),
+                        cornerRadius: 8
+                    )
+                    .padding(.trailing, isImmersive ? 18 : 10)
+                    .padding(.bottom, isImmersive ? 18 : 12)
             }
 
             if !railOnly, !pdfBilingualEnabled, pdfHasSelectableText == false {
@@ -485,7 +516,6 @@ struct ReaderView: View {
                     mark: "READ",
                     title: floatingTitle,
                     appearanceMode: store.appearanceMode,
-                    isPinned: store.selectedMaterialItem?.kind != .pdf && translationMenuPresented,
                     reorderRole: floatingTitleReorderRole
                 ) {
                     HStack(spacing: 8) {
@@ -494,9 +524,6 @@ struct ReaderView: View {
                         if let item = store.selectedMaterialItem,
                            !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
                             ExcerptBookButton(itemID: item.id)
-                        }
-                        if supportsBilingualReading, store.selectedMaterialItem?.kind != .pdf {
-                            translationMenu()
                         }
                         importedDocumentAdaptationControl
                     }
@@ -1524,7 +1551,7 @@ struct ReaderView: View {
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
                         onDocumentTap: { store.clearReaderSourceHighlight() },
-                        translationContext: item.kind == .html ? translationContext : nil,
+                        translationContext: translationContext,
                         onTranslationStatus: { webTranslationStatus = $0 },
                         interfaceLanguage: store.interfaceLanguage
                     ) { text, anchor in
@@ -1560,15 +1587,48 @@ struct ReaderView: View {
                             .markdownMaximumByteCount
                     ),
                    let text = Self.decodeTextMaterial(data) {
-                    PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode,
-                        searchNavigationRequest: paneState.readerSearchNavigationRequest,
-                        searchRequestedIndex: paneState.readerSearchRequestedIndex,
-                        searchSessionID: paneState.readerSearchSessionID,
-                        searchReturnRequest: paneState.readerSearchReturnRequest,
-                        onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
-                        underlineSnippets: store.markedSelectionAskThreads(forItemID: item.id).map(\.selectionText),
-                        onDocumentTap: { store.clearReaderSourceHighlight() }) { text, anchor in
-                        store.updateSelection(text, source: .document, anchor: anchor)
+                    let position = plainTextPosition.forMaterial(item.id)
+                    if bilingualEnabled {
+                        WebReaderRepresentable(
+                            html: Self.plainTextBilingualHTML(text, revision: item.contentRevision,
+                                                            openingOffset: position.openingOffset),
+                            searchQuery: store.effectiveReaderSearch,
+                            searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                            searchRequestedIndex: paneState.readerSearchRequestedIndex,
+                            searchSessionID: paneState.readerSearchSessionID,
+                            searchReturnRequest: paneState.readerSearchReturnRequest,
+                            onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
+                            appearanceMode: store.appearanceMode,
+                            hidesHostedDocument: store.materialPickerPresented,
+                            selectionAskMarks: selectionAskMarksJSON(for: item.id),
+                            onSelectionAskMark: { threadID, anchor in
+                                if let uuid = UUID(uuidString: threadID) {
+                                    store.openSelectionAskThread(uuid, anchor: anchor)
+                                }
+                            },
+                            onDocumentTap: { store.clearReaderSourceHighlight() },
+                            onPlainTextPositionChange: { offset in
+                                if position.materialID == item.id { position.offset = offset }
+                            },
+                            translationContext: translationContext,
+                            onTranslationStatus: { webTranslationStatus = $0 },
+                            interfaceLanguage: store.interfaceLanguage
+                        ) { text, anchor in
+                            store.updateSelection(text, source: .document, anchor: anchor)
+                        }
+                    } else {
+                        PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode,
+                            searchNavigationRequest: paneState.readerSearchNavigationRequest,
+                            searchRequestedIndex: paneState.readerSearchRequestedIndex,
+                            searchSessionID: paneState.readerSearchSessionID,
+                            searchReturnRequest: paneState.readerSearchReturnRequest,
+                            onSearchResults: { query, results, index in reportSearchResults(query, results, index, for: item.id) },
+                            underlineSnippets: store.markedSelectionAskThreads(forItemID: item.id).map(\.selectionText),
+                            readingPosition: position,
+                            onDocumentTap: { store.clearReaderSourceHighlight() }) { text, anchor in
+                            store.updateSelection(text, source: .document, anchor: anchor)
+                        }
+                        .id(item.id)
                     }
                 } else {
                     MaterialReadFailureView(fileName: store.displayTitle(for: item))
@@ -1622,6 +1682,57 @@ struct ReaderView: View {
     static func decodeTextMaterial(_ data: Data) -> String? {
         if let text = String(data: data, encoding: .utf8) { return text }
         return String(data: data, encoding: ReaderView.gb18030TextEncoding)
+    }
+
+    private static func plainTextBilingualHTML(_ text: String, revision: UInt64, openingOffset: Int) -> String {
+        var paragraphs = ""
+        var offset = 0
+        var lineNumber = 1
+        text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: .byLines) { line, _, fullRange, _ in
+            let escaped = (line ?? "").replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+            paragraphs += "<p data-weibei-text-offset=\"\(offset)\" data-weibei-text-line=\"\(lineNumber)\">\(escaped)</p>"
+            offset += text[fullRange].utf16.count
+            lineNumber += 1
+        }
+        return """
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+        body{margin:0;padding:50px min(50px,8vw);font:15px/1.2 ui-monospace,monospace}
+        p{margin:0;min-height:1.2em;white-space:pre-wrap;overflow-wrap:anywhere;scroll-margin-top:50px}
+        weibei-reader-translation{font-family:-apple-system,sans-serif}
+        </style></head><body data-weibei-plain-text data-weibei-revision="\(revision)">\(paragraphs)
+        <script>
+        (() => {
+          const lines = Array.from(document.querySelectorAll('p[data-weibei-text-offset]'));
+          if (!lines.length) return;
+          const offsetOf = line => Number(line.dataset.weibeiTextOffset);
+          if (\(openingOffset) > 0) {
+            lines.findLast(line => offsetOf(line) <= \(openingOffset))?.scrollIntoView({block:'start',behavior:'instant'});
+          }
+          let frame, lastOffset;
+          window.addEventListener('scroll', () => {
+            if (frame) return;
+            frame = requestAnimationFrame(() => {
+              frame = undefined;
+              let first = 0, end = lines.length;
+              const top = Math.min(50, innerHeight / 2);
+              while (first < end) {
+                const middle = (first + end) >> 1;
+                if (lines[middle].getBoundingClientRect().bottom <= top) first = middle + 1;
+                else end = middle;
+              }
+              const offset = offsetOf(lines[Math.min(first, lines.length - 1)]);
+              if (offset === lastOffset) return;
+              lastOffset = offset;
+              const loadToken = document.querySelector('meta[name="weibei-reader-load-token"]')?.content;
+              window.webkit.messageHandlers.plainTextPosition.postMessage({offset, loadToken});
+            });
+          }, {passive:true});
+        })();
+        </script></body></html>
+        """
     }
 
     private func markdownReader(markdown: String, markdownBaseURL: URL?) -> some View {
@@ -3510,7 +3621,9 @@ enum ReaderWebSearch {
             if (/^H[1-6]$/.test(block.tagName) || /heading|标题/i.test(block.className)) {
               heading = text.trim().split(/[：:]/)[0].slice(0, 8);
             }
-            const location = heading || '段 ' + blockIndex;
+            const location = block.dataset.weibeiTextLine
+              ? '第 ' + block.dataset.weibeiTextLine + ' 行'
+              : heading || '段 ' + blockIndex;
             const lower = text.toLocaleLowerCase(), needle = query.toLocaleLowerCase();
             let from = 0, at;
             while ((at = lower.indexOf(needle, from)) !== -1) {
@@ -3590,6 +3703,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var onDocumentTap: () -> Void = {}
 
     var onResourceIssuesChange: ([String]) -> Void = { _ in }
+    var onPlainTextPositionChange: (Int) -> Void = { _ in }
     var translationContext: ReaderTranslationContext?
     var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -3599,6 +3713,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         "htmlResourceIssues",
         "officeReady",
         "officeSourceChanged",
+        "plainTextPosition",
         "selection",
         "selectionAskMark",
         "remarkMark",
@@ -3616,6 +3731,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onSearchResults: @escaping (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in },
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = true,
+        hidesHostedDocument: Bool = false,
         contentRailTarget: WebReaderContentRailTarget? = nil,
         selectionAskMarks: String = "[]",
         selectionRemarkMarks: String = "[]",
@@ -3624,6 +3740,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onContentRailTargetUnavailable: @escaping (UUID) -> Void = { _ in },
         onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
+        onDocumentTap: @escaping () -> Void = {},
+        onPlainTextPositionChange: @escaping (Int) -> Void = { _ in },
+        translationContext: ReaderTranslationContext? = nil,
+        onTranslationStatus: @escaping (ReaderTranslationStatus) -> Void = { _ in },
         interfaceLanguage: WeiBeiInterfaceLanguage = .chinese,
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
@@ -3637,6 +3757,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onSearchResults = onSearchResults
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
+        self.hidesHostedDocument = hidesHostedDocument
         self.contentRailTarget = contentRailTarget
         self.selectionAskMarks = selectionAskMarks
         self.selectionRemarkMarks = selectionRemarkMarks
@@ -3645,6 +3766,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onContentRailTargetUnavailable = onContentRailTargetUnavailable
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
+        self.onDocumentTap = onDocumentTap
+        self.onPlainTextPositionChange = onPlainTextPositionChange
+        self.translationContext = translationContext
+        self.onTranslationStatus = onTranslationStatus
         self.interfaceLanguage = interfaceLanguage
         self.onSelectionChange = onSelectionChange
     }
@@ -3834,6 +3959,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.onSelectionRemarkMark = onSelectionRemarkMark
         context.coordinator.onDocumentTap = onDocumentTap
+        context.coordinator.onPlainTextPositionChange = onPlainTextPositionChange
         context.coordinator.contentRailTarget = contentRailTarget
         context.coordinator.selectionAskMarks = selectionAskMarks
         context.coordinator.selectionRemarkMarks = selectionRemarkMarks
@@ -4005,6 +4131,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
     static func contentRailScript(language: WeiBeiInterfaceLanguage) -> String {
         motionRuntimeScript + """
     (() => {
+      if (document.body?.hasAttribute('data-weibei-plain-text')) return;
       if (window.WeiBeiContentRail?.installed) {
         window.WeiBeiContentRail.scan();
         return;
@@ -4421,6 +4548,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         var selectionRemarkMarks = "[]"
         var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
         var onResourceIssuesChange: ([String]) -> Void = { _ in }
+        var onPlainTextPositionChange: (Int) -> Void = { _ in }
         var translationContext: ReaderTranslationContext?
         var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
         private let translation = ReaderWebTranslation()
@@ -4471,7 +4599,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
         func updateTranslation(in view: WKWebView) {
             translation.update(in: view, context: translationDocumentReady ? translationContext : nil,
-                               rootSelector: "body", onStatus: onTranslationStatus)
+                               rootSelector: isOfficeDocument ? "#office-document" : "body",
+                               onStatus: onTranslationStatus)
         }
 
         private var reduceMotion = false
@@ -4589,6 +4718,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         }
 
         func taggedHTML(_ html: String, token: String? = nil) -> String {
+            isOfficeDocument = false
             let token = token ?? UUID().uuidString.lowercased()
             readerLoadToken = token
             let marker = "<meta name=\"weibei-reader-load-token\" content=\"\(token)\">"
@@ -4678,15 +4808,31 @@ struct WebReaderRepresentable: ReaderRepresentable {
                 return
             }
             if message.name == "officeReady" {
-                guard (message.body as? [String: Any])?["loadToken"] as? String == readerLoadToken else { return }
+                guard let body = message.body as? [String: Any],
+                      body["loadToken"] as? String == readerLoadToken else { return }
                 lastAppliedSelectionAskMarks = ""
                 lastAppliedSelectionRemarkMarks = ""
-                if (message.body as? [String: Any])?["loaded"] as? Bool == true {
+                if body["loaded"] as? Bool == true {
                     lastAppliedSearchQuery = ""
                     lastAppliedContentRailTargetRequestID = nil
-                    if let webView { applySearch(in: webView); applyContentRailTarget(in: webView) }
+                    translationDocumentReady = true
+                    if let webView {
+                        applySearch(in: webView)
+                        applyContentRailTarget(in: webView)
+                        updateTranslation(in: webView)
+                    }
+                } else if body["error"] != nil {
+                    translationDocumentReady = false
+                    if let webView { updateTranslation(in: webView) }
                 }
                 applySelectionMarksIfNeeded()
+                return
+            }
+            if message.name == "plainTextPosition" {
+                guard let body = message.body as? [String: Any],
+                      body["loadToken"] as? String == readerLoadToken,
+                      let offset = body["offset"] as? Int, offset >= 0 else { return }
+                onPlainTextPositionChange(offset)
                 return
             }
 
@@ -4793,8 +4939,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
                 self.applySearch(in: webView)
                 self.applyContentRailTarget(in: webView)
                 self.applySelectionMarksIfNeeded()
-                self.translationDocumentReady = true
-                self.updateTranslation(in: webView)
+                if !self.isOfficeDocument {
+                    self.translationDocumentReady = true
+                    self.updateTranslation(in: webView)
+                }
             }
         }
 
@@ -5080,6 +5228,24 @@ struct ContextualContentListButton: View {
     }
 }
 
+@MainActor
+final class ReaderPlainTextPosition {
+    private(set) var materialID: String?
+    var offset = 0
+    var openingOffset = 0
+    var captureNativeOffset: (() -> Int?)?
+
+    func forMaterial(_ id: String) -> ReaderPlainTextPosition {
+        if materialID != id {
+            materialID = id
+            offset = 0
+            openingOffset = 0
+            captureNativeOffset = nil
+        }
+        return self
+    }
+}
+
 private struct PlainTextReaderView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var text: String
@@ -5092,6 +5258,7 @@ private struct PlainTextReaderView: View {
     var onSearchResults: (String, [ReaderSearchResult], Int) -> Void = { _, _, _ in }
     /// X8: asked-selection underlines for THIS material only, filtered by the caller.
     var underlineSnippets: [String] = []
+    var readingPosition: ReaderPlainTextPosition?
     var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
 
@@ -5107,6 +5274,7 @@ private struct PlainTextReaderView: View {
             appearanceMode: appearanceMode,
             hidesHostedDocument: store.materialPickerPresented,
             underlineSnippets: underlineSnippets,
+            readingPosition: readingPosition,
             onDocumentTap: onDocumentTap,
             onSelectionChange: onSelectionChange
         )
@@ -5128,6 +5296,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
     var hidesHostedDocument = false
     var underlineSnippets: [String]
+    var readingPosition: ReaderPlainTextPosition?
     var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     private let customAccent = WeiBeiThemeRuntime.customAccent
@@ -5157,6 +5326,28 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
 
         scrollView.documentView = textView
+        readingPosition?.captureNativeOffset = { [weak scrollView, weak textView] in
+            guard let scrollView, let textView,
+                  let layout = textView.layoutManager, let container = textView.textContainer else { return nil }
+            let y = scrollView.contentView.bounds.minY + textView.textContainerInset.height
+            let point = CGPoint(x: 0, y: y - textView.textContainerOrigin.y)
+            return layout.characterIndex(for: point, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+        }
+        if let offset = readingPosition?.offset, offset > 0 {
+            DispatchQueue.main.async { [weak scrollView, weak textView] in
+                guard let scrollView, let textView, offset < textView.string.utf16.count,
+                      let layout = textView.layoutManager, let container = textView.textContainer else { return }
+                scrollView.layoutSubtreeIfNeeded()
+                let glyph = layout.glyphRange(forCharacterRange: NSRange(location: offset, length: 1),
+                                              actualCharacterRange: nil)
+                let y = layout.boundingRect(forGlyphRange: glyph, in: container).minY
+                let origin = scrollView.contentView.constrainBoundsRect(
+                    CGRect(origin: CGPoint(x: 0, y: y), size: scrollView.contentView.bounds.size)
+                ).origin
+                scrollView.contentView.scroll(to: origin)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+        }
         return scrollView
     }
 

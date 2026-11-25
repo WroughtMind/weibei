@@ -1,11 +1,17 @@
 import PDFKit
 import SwiftUI
 import WeiBeiCore
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
+import AppKit
+#endif
 
 struct ReaderPDFTranslationPage: Equatable {
     struct Paragraph: Identifiable, Equatable {
         let id: Int
         var text: String
+        var sourceRects: [SelectionRect]
     }
 
     let index: Int
@@ -52,8 +58,9 @@ struct ReaderPDFTranslationPage: Equatable {
                 } else {
                     result[last].text += " " + text
                 }
+                result[last].sourceRects.append(SelectionRect(line.rect))
             } else {
-                result.append(Paragraph(id: result.count, text: text))
+                result.append(Paragraph(id: result.count, text: text, sourceRects: [SelectionRect(line.rect)]))
             }
             previous = line.rect
         }
@@ -72,10 +79,16 @@ struct ReaderPDFTranslationPage: Equatable {
 }
 
 struct ReaderPDFBilingualPage: View {
+    @Environment(\.weiBeiTextScale) private var textScale
+    @State private var selectedBlock: TextBlock?
+
     let page: ReaderPDFTranslationPage
     let translations: [Int: String]
     let status: ReaderTranslationStatus
     let horizontalInset: CGFloat
+    let appearanceMode: WeiBeiAppearanceMode
+    let isActive: Bool
+    var onSelectionChange: (String, SelectionPopoverAnchor?, PDFSelectionAnchor?) -> Void
     var retry: () -> Void
     @Binding var visibleParagraphID: Int?
 
@@ -84,14 +97,20 @@ struct ReaderPDFBilingualPage: View {
         translations: [Int: String],
         status: ReaderTranslationStatus,
         horizontalInset: CGFloat,
+        appearanceMode: WeiBeiAppearanceMode,
+        isActive: Bool,
         visibleParagraphID: Binding<Int?>,
+        onSelectionChange: @escaping (String, SelectionPopoverAnchor?, PDFSelectionAnchor?) -> Void,
         retry: @escaping () -> Void
     ) {
         self.page = page
         self.translations = translations
         self.status = status
         self.horizontalInset = horizontalInset
+        self.appearanceMode = appearanceMode
+        self.isActive = isActive
         _visibleParagraphID = visibleParagraphID
+        self.onSelectionChange = onSelectionChange
         self.retry = retry
     }
 
@@ -100,10 +119,9 @@ struct ReaderPDFBilingualPage: View {
             LazyVStack(alignment: .leading, spacing: 24) {
                 ForEach(page.paragraphs) { paragraph in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(verbatim: paragraph.text)
+                        selectableText(paragraph.text, in: paragraph)
                         if let translation = translations[paragraph.id] {
-                            Text(verbatim: translation)
-                                .foregroundStyle(WeiBeiTheme.ink.opacity(0.78))
+                            selectableText(translation, in: paragraph, isTranslation: true)
                                 .padding(.leading, 12)
                                 .overlay(alignment: .leading) {
                                     Rectangle()
@@ -127,9 +145,160 @@ struct ReaderPDFBilingualPage: View {
             .frame(maxWidth: .infinity)
         }
         .scrollPosition(id: $visibleParagraphID, anchor: .top)
-        .weiBeiText(15)
-        .lineSpacing(5)
-        .textSelection(.enabled)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: isActive) { _, active in
+            if !active { clearSelection() }
+        }
+        .onDisappear(perform: clearSelection)
+    }
+
+    private struct TextBlock: Equatable {
+        let paragraphID: Int
+        let isTranslation: Bool
+    }
+
+    private func selectableText(_ text: String, in paragraph: ReaderPDFTranslationPage.Paragraph,
+                                isTranslation: Bool = false) -> some View {
+        let block = TextBlock(paragraphID: paragraph.id, isTranslation: isTranslation)
+        let color = WeiBeiNativePalette.ink(for: appearanceMode)
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 5
+        let content = NSAttributedString(string: text, attributes: [
+            .font: WeiBeiPlatformFont.systemFont(ofSize: 15 * textScale),
+            .foregroundColor: isTranslation ? color.withAlphaComponent(0.78) : color,
+            .paragraphStyle: style
+        ])
+        return ReaderPDFSelectableParagraph(content: content) { text, anchor in
+            if isActive, let anchor, !text.isEmpty {
+                selectedBlock = block
+                // Both selections refer to the source paragraph on the PDF page.
+                let source = PDFSelectionAnchor(pageIndex: page.index, lineRects: paragraph.sourceRects)
+                onSelectionChange(text, anchor, source)
+            } else if selectedBlock == block {
+                clearSelection()
+            }
+        }
+        .onDisappear {
+            if selectedBlock == block { clearSelection() }
+        }
+    }
+
+    private func clearSelection() {
+        guard selectedBlock != nil else { return }
+        selectedBlock = nil
+        onSelectionChange("", nil, nil)
     }
 }
+
+#if targetEnvironment(macCatalyst)
+private struct ReaderPDFSelectableParagraph: UIViewRepresentable {
+    let content: NSAttributedString
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView()
+        view.isEditable = false
+        view.isSelectable = true
+        view.isScrollEnabled = false
+        view.contentInsetAdjustmentBehavior = .never
+        view.backgroundColor = .clear
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.delegate = context.coordinator
+        return view
+    }
+
+    func updateUIView(_ view: UITextView, context: Context) {
+        if view.attributedText?.isEqual(to: content) != true {
+            view.delegate = nil
+            let selection = view.text == content.string ? view.selectedRange : nil
+            view.attributedText = content
+            if let selection { view.selectedRange = selection }
+            view.delegate = context.coordinator
+        }
+        context.coordinator.onSelectionChange = onSelectionChange
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        let height = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        return CGSize(width: width, height: ceil(height))
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+
+        func textViewDidChangeSelection(_ view: UITextView) {
+            guard let range = view.selectedTextRange, !range.isEmpty, let text = view.text(in: range) else {
+                onSelectionChange("", nil)
+                return
+            }
+            let rect = view.selectionRects(for: range).map(\.rect).reduce(CGRect.null) { $0.union($1) }
+            let anchor = rect.isNull ? nil : SelectionAnchorContentPoint.fromLocalPoint(
+                CGPoint(x: rect.midX, y: rect.maxY), in: view
+            )
+            onSelectionChange(text, anchor)
+        }
+    }
+}
+#else
+private struct ReaderPDFSelectableParagraph: NSViewRepresentable {
+    let content: NSAttributedString
+    var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
+
+    func makeNSView(context: Context) -> NSTextView {
+        let view = NSTextView(usingTextLayoutManager: false)
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.widthTracksTextView = true
+        view.delegate = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {
+        if let storage = view.textStorage, !storage.isEqual(to: content) {
+            view.delegate = nil
+            let selection = view.string == content.string ? view.selectedRange() : nil
+            storage.setAttributedString(content)
+            if let selection { view.setSelectedRange(selection) }
+            view.delegate = context.coordinator
+        }
+        context.coordinator.onSelectionChange = onSelectionChange
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        let height = content.boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+        return CGSize(width: width, height: ceil(height))
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let view = notification.object as? NSTextView,
+                  let window = view.window else { return }
+            let range = view.selectedRange()
+            guard range.length > 0, let stringRange = Range(range, in: view.string) else {
+                onSelectionChange("", nil)
+                return
+            }
+            let rect = view.firstRect(forCharacterRange: range, actualRange: nil)
+            let anchor = rect.isEmpty ? nil : SelectionAnchorContentPoint.fromScreenPoint(
+                CGPoint(x: rect.midX, y: rect.minY), in: window
+            )
+            onSelectionChange(String(view.string[stringRange]), anchor)
+        }
+    }
+}
+#endif
