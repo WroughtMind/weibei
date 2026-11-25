@@ -12,6 +12,7 @@ enum SelectionAnchorContentPoint {
         guard let payload, let view, let x = payload["x"] as? Double, let y = payload["y"] as? Double,
               x.isFinite, y.isFinite,
               var result = fromWebPoint(x: x, y: y, prefersAbove: payload["prefersAbove"] as? Bool == true, in: view) else { return nil }
+        if let height = payload["height"] as? Double, height.isFinite, height > 0 { result.selectionHeight = height }
         if let anchor = payload["anchor"] as? [String: Any],
            let start = anchor["startOffset"] as? Int, let end = anchor["endOffset"] as? Int,
            start >= 0, end > start {
@@ -20,17 +21,19 @@ enum SelectionAnchorContentPoint {
         return result
     }
 
-    static func fromLocalPoint(_ point: CGPoint, in view: SelectionPlatformView) -> SelectionPopoverAnchor? {
+    static func fromLocalPoint(_ point: CGPoint, in view: SelectionPlatformView, selectionHeight: CGFloat? = nil) -> SelectionPopoverAnchor? {
 #if targetEnvironment(macCatalyst)
         guard let contentView = view.window?.rootViewController?.view else { return nil }
         let point = view.convert(point, to: contentView)
-        return SelectionPopoverAnchor(x: point.x, y: point.y)
+        return SelectionPopoverAnchor(x: point.x, y: point.y, selectionHeight: selectionHeight)
 #else
         guard let window = view.window,
               let contentView = window.contentView else {
             return nil
         }
-        return fromWindowPoint(view.convert(point, to: nil), in: contentView)
+        var anchor = fromWindowPoint(view.convert(point, to: nil), in: contentView)
+        anchor.selectionHeight = selectionHeight
+        return anchor
 #endif
     }
 
@@ -46,9 +49,22 @@ enum SelectionAnchorContentPoint {
     }
 
 #if !targetEnvironment(macCatalyst)
-    static func fromScreenPoint(_ point: CGPoint, in window: NSWindow) -> SelectionPopoverAnchor? {
+    static func fromTextRange(_ range: NSRange, in view: NSTextView) -> SelectionPopoverAnchor? {
+        guard range.length > 0, let window = view.window else { return nil }
+        let first = view.firstRect(forCharacterRange: range, actualRange: nil)
+        guard !first.isEmpty else { return nil }
+        let lastRange = NSRange(location: NSMaxRange(range) - 1, length: 1)
+        let last = view.firstRect(forCharacterRange: lastRange, actualRange: nil)
+        let rect = last.isEmpty ? first : last
+        return fromScreenPoint(CGPoint(x: rect.midX, y: rect.minY), in: window,
+                               selectionHeight: first.union(rect).height)
+    }
+
+    static func fromScreenPoint(_ point: CGPoint, in window: NSWindow, selectionHeight: CGFloat? = nil) -> SelectionPopoverAnchor? {
         guard let contentView = window.contentView else { return nil }
-        return fromWindowPoint(window.convertPoint(fromScreen: point), in: contentView)
+        var anchor = fromWindowPoint(window.convertPoint(fromScreen: point), in: contentView)
+        anchor.selectionHeight = selectionHeight
+        return anchor
     }
 
     private static func fromWindowPoint(_ point: CGPoint, in contentView: NSView) -> SelectionPopoverAnchor {

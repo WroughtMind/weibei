@@ -373,6 +373,7 @@ struct ReaderView: View {
     }
 
     private func setBilingualReading(_ enabled: Bool) {
+        interaction.readerSelectionTranslation = nil
         if store.selectedMaterialItem?.kind == .text {
             if enabled {
                 plainTextPosition.offset = plainTextPosition.captureNativeOffset?() ?? plainTextPosition.offset
@@ -561,25 +562,21 @@ struct ReaderView: View {
     private var visibleSelectionTranslation: ReaderSelectionTranslationRequest? {
         guard let request = interaction.readerSelectionTranslation,
               let material = store.selectedMaterialItem,
-              material.id == request.itemID, material.contentRevision == request.revision,
+              !store.materialPickerPresented,
+              material.id == request.selection.itemID, material.contentRevision == request.revision,
               !ContentRailMetrics.isRailOnly(availableWidth: measuredPaneSize.width,
                   allowed: supportsContentRail && !isImmersive) else { return nil }
         return request
     }
 
     private var readerPresentation: some View {
-        VStack(spacing: 0) {
-            readerPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Measure the document viewport without the translation line.
-                .background {
-                    GeometryReader { geo in
-                        Color.clear.preference(key: ReaderPaneSizeKey.self, value: geo.size)
-                    }
-                }
+        readerPane
+        .overlay(alignment: .topLeading) {
             if let request = visibleSelectionTranslation {
-                ReaderSelectionTranslationLine(request: request) {
-                    interaction.readerSelectionTranslation = nil
+                ReaderSelectionTranslationAnnotation(request: request) {
+                    if interaction.readerSelectionTranslation?.id == request.id {
+                        interaction.readerSelectionTranslation = nil
+                    }
                 }
                 .id(request.id)
             }
@@ -608,7 +605,6 @@ struct ReaderView: View {
             }
         }
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
-            interaction.readerSelectionTranslation = nil
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
             translationMenuPresented = false
@@ -616,6 +612,12 @@ struct ReaderView: View {
             setBilingualReading(false)
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+        // Width/height probe as background sibling — never parent of WKWebView/PDFView.
+        .background {
+            GeometryReader { geo in
+                Color.clear.preference(key: ReaderPaneSizeKey.self, value: geo.size)
+            }
+        }
         .onPreferenceChange(ReaderPaneSizeKey.self) { size in
             guard size.width > 1, size.height > 1 else { return }
             if abs(measuredPaneSize.width - size.width) > 0.5
@@ -678,6 +680,19 @@ struct ReaderView: View {
         }
         .onChange(of: store.showReader) { _, visible in
             if visible { loadMarkdownSnapshot() }
+            else { interaction.readerSelectionTranslation = nil }
+        }
+        .onChange(of: store.materialPickerPresented) { _, presented in
+            if presented { interaction.readerSelectionTranslation = nil }
+        }
+        .onChange(of: pdfPageIndex) { _, _ in
+            interaction.readerSelectionTranslation = nil
+        }
+        .onChange(of: store.effectiveReaderSearch) { _, _ in
+            interaction.readerSelectionTranslation = nil
+        }
+        .onChange(of: paneState.readerSearchNavigationRequest) { _, _ in
+            interaction.readerSelectionTranslation = nil
         }
         .onChange(of: pdfPageCount) { _, _ in
             syncReaderLocationTitle()
@@ -1490,7 +1505,6 @@ struct ReaderView: View {
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         hidesHostedDocument: store.materialPickerPresented || (bilingualPDFPage != nil && !pdfSearchActive),
-                        clearSelectionRequestID: visibleSelectionTranslation?.id,
                         pageIndex: visiblePDFPageBinding,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
@@ -2029,7 +2043,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var adaptsDocumentColors: Bool
     /// Glass paper is clear, and PDFView ignores ancestor opacity.
     var hidesHostedDocument = false
-    var clearSelectionRequestID: UUID?
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
     @Binding var railTargetPageIndex: Int?
@@ -2146,7 +2159,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.onDocumentReadabilityChange = onDocumentReadabilityChange
         context.coordinator.onRestorationFinished = onRestorationFinished
         context.coordinator.updateRestorationRequest(restorationRequest)
-        context.coordinator.clearSelectionIfRequested(clearSelectionRequestID, in: view)
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
@@ -2234,7 +2246,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var pageObserver: NSObjectProtocol?
         private var eventMonitor: Any?
         private var selectionWork: DispatchWorkItem?
-        private var lastClearSelectionRequestID: UUID?
         private var nativeTextPageIndexes: Set<Int> = []
         private var ocrPagesByPageIndex: [Int: PDFOCRPage] = [:]
         private var visibleOCROverlays: [PDFPage: PDFOCRPageOverlayView] = [:]
@@ -2801,13 +2812,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             }
 #endif
             (observedView as? ReaderPDFView)?.onUserScroll = nil
-        }
-
-        func clearSelectionIfRequested(_ id: UUID?, in view: PDFView) {
-            guard let id, id != lastClearSelectionRequestID else { return }
-            lastClearSelectionRequestID = id
-            selectionWork?.cancel()
-            DispatchQueue.main.async { [weak view] in view?.clearSelection() }
         }
 
         func reportCurrentSelection(in view: PDFView) {
@@ -4093,6 +4097,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
             text,
             x: rect?.x ?? null,
             y: rect?.y ?? null,
+            height: rect?.height ?? null,
             prefersAbove: rect?.prefersAbove ?? false,
             anchor: text ? WeiBeiSelection.domSelectionTextAnchor(selection, document.body) : null,
             loadToken: readerLoadToken()
@@ -5495,11 +5500,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         }
 
         private static func anchor(for range: NSRange, in textView: NSTextView) -> SelectionPopoverAnchor? {
-            guard let window = textView.window else { return nil }
-            let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
-            guard !rect.isEmpty else { return nil }
-            let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
-            return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
+            SelectionAnchorContentPoint.fromTextRange(range, in: textView)
         }
 
         func applySearch(_ query: String, in textView: NSTextView) {

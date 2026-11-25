@@ -6575,6 +6575,14 @@ final class WorkspaceStore: ObservableObject {
         guard !courseWorkspacePresented else { return }
         let documentAnchor = documentAnchor ?? anchor?.textAnchor.map { SelectionDocumentAnchor(text: $0) }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
+        if source == .document, let request = interaction.readerSelectionTranslation, !cleaned.isEmpty {
+            // Hosted readers can repeat the same selection when the capsule loses focus.
+            if request.selection.itemID == selectedItemID,
+               request.selection.text == cleaned, request.selection.documentAnchor == documentAnchor {
+                return
+            }
+            interaction.readerSelectionTranslation = nil
+        }
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
             if automaticSelection?.source == source {
                 clearAutomaticSelectionAttachment()

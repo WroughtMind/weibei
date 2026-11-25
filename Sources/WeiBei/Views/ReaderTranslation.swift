@@ -1,5 +1,10 @@
 import SwiftUI
 import WeiBeiCore
+#if targetEnvironment(macCatalyst)
+import UIKit
+#else
+import AppKit
+#endif
 
 struct ReaderTranslationPreferences: DynamicProperty {
     @AppStorage("weibei.readerTranslation.connection") private var connectionID = ""
@@ -233,9 +238,10 @@ struct ReaderSelectionTranslationButton: View {
 
     var body: some View {
         Button {
-            guard let item = store.selectedMaterialItem, item.id == selection.itemID else { return }
+            guard let item = store.selectedMaterialItem, item.id == selection.itemID,
+                  let anchor = store.interaction.selectionAnchor else { return }
             store.interaction.readerSelectionTranslation = ReaderSelectionTranslationRequest(
-                itemID: item.id, revision: item.contentRevision, text: selection.text
+                revision: item.contentRevision, selection: selection, anchor: anchor
             )
             store.dismissFloatingSelectionAgent()
         } label: {
@@ -248,15 +254,15 @@ struct ReaderSelectionTranslationButton: View {
     }
 }
 
-struct ReaderSelectionTranslationLine: View {
+struct ReaderSelectionTranslationAnnotation: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
     let request: ReaderSelectionTranslationRequest
     let dismiss: () -> Void
     private var preferences = ReaderTranslationPreferences()
-    @State private var attempt = UUID()
     @State private var result: Result<String, ReaderTranslationProblem>?
-    @State private var textHeight: CGFloat = 0
+    @State private var readerBounds: CGRect?
+    @State private var scrollableResultBounds = CGRect.null
 
     init(request: ReaderSelectionTranslationRequest, dismiss: @escaping () -> Void) {
         self.request = request
@@ -264,50 +270,59 @@ struct ReaderSelectionTranslationLine: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Group {
-                switch result {
-                case let .success(text):
-                    ScrollView {
-                        Text(verbatim: text)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
+        GeometryReader { geometry in
+            if let readerBounds {
+                let point = CGPoint(x: request.anchor.x - readerBounds.minX, y: request.anchor.y - readerBounds.minY)
+                if geometry.size.width > 16, geometry.size.height > 16 {
+                    ReaderSelectionAnnotationLayout(
+                        point: point, prefersAbove: request.anchor.prefersAbove,
+                        selectionHeight: request.anchor.selectionHeight ?? 18 * textScale,
+                        readableWidth: 320 * textScale
+                    ) {
+                        ViewThatFits(in: .vertical) {
+                            message.fixedSize(horizontal: false, vertical: true).allowsHitTesting(false)
+                            ScrollView {
+                                message.textSelection(.enabled)
+                            }
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(request.id)) } action: {
+                                scrollableResultBounds = $0
+                            }
+                            .onDisappear { scrollableResultBounds = .null }
+                        }
+                        .weiBeiText(13)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(WeiBeiTheme.paperRaised)
+                                .allowsHitTesting(false)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 4)
+                                .strokeBorder(WeiBeiTheme.hairline.opacity(0.6), lineWidth: 1)
+                                .allowsHitTesting(false)
+                        }
                     }
-                    .scrollBounceBehavior(.basedOnSize)
-                    .frame(height: min(textHeight > 0 ? textHeight : 24, 92 * textScale))
-                case let .failure(problem):
-                    ReaderTranslationProblemView(problem: problem) { attempt = UUID() }
-                case nil:
-                    Text(store.ui("正在翻译…", "Translating…"))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
-
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-            .accessibilityLabel(store.ui("收起译文", "Dismiss translation"))
-            .help(store.ui("收起译文", "Dismiss translation"))
         }
-        .weiBeiText(13)
-        .frame(maxWidth: 680)
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(WeiBeiTheme.paperRaised)
-        .overlay(alignment: .top) { Rectangle().fill(WeiBeiTheme.hairline).frame(height: 1).allowsHitTesting(false) }
-        .task(id: attempt) {
-            result = nil
+        .coordinateSpace(name: request.id)
+        .background {
+            ReaderSelectionAnnotationProbe(anchor: request.anchor) { bounds in
+                if let readerBounds, readerBounds != bounds { dismiss() }
+                else { readerBounds = bounds }
+            } onInteraction: { point in
+                if !scrollableResultBounds.contains(point) { dismiss() }
+            } onDocumentScroll: { dismiss() }
+            .accessibilityHidden(true)
+        }
+        .task {
             guard let service = preferences.service(in: store) else {
                 result = .failure(.missingConnection)
                 return
             }
             do {
-                guard let text = try await service.translate([request.text]).first else {
+                guard let text = try await service.translate([request.selection.text]).first else {
                     throw ReaderTranslationService.Failure.invalidTranslation
                 }
                 try Task.checkCancellation()
@@ -319,4 +334,250 @@ struct ReaderSelectionTranslationLine: View {
         }
     }
 
+    @ViewBuilder
+    private var message: some View {
+        switch result {
+        case let .success(text): Text(verbatim: text).foregroundStyle(WeiBeiTheme.ink)
+        case let .failure(problem): Text(problem.message(store.interfaceLanguage)).foregroundStyle(WeiBeiTheme.secondaryInk)
+        case nil: Text(store.ui("翻译中…", "Translating…")).foregroundStyle(WeiBeiTheme.secondaryInk)
+        }
+    }
 }
+
+private struct ReaderSelectionAnnotationLayout: Layout {
+    let point: CGPoint
+    let prefersAbove: Bool
+    let selectionHeight: CGFloat
+    let readableWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let annotation = subviews.first, bounds.width > 16, bounds.height > 16 else { return }
+        let area = bounds.insetBy(dx: 8, dy: 8)
+        let anchor = CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y)
+        let aboveEdge = min(area.maxY, anchor.y - (prefersAbove ? 0 : selectionHeight) - 4)
+        let belowEdge = max(area.minY, anchor.y + (prefersAbove ? selectionHeight : 0) + 4)
+        let aboveRoom = max(0, aboveEdge - area.minY)
+        let belowRoom = max(0, area.maxY - belowEdge)
+        let width = min(readableWidth, area.width)
+        let ideal = annotation.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        let preferredRoom = prefersAbove ? aboveRoom : belowRoom
+        let useAbove = ideal.height <= preferredRoom ? prefersAbove : aboveRoom > belowRoom
+        let room = useAbove ? aboveRoom : belowRoom
+        // A selection across the whole viewport may have both endpoints offscreen.
+        let availableHeight = room >= min(20, ideal.height) ? room : area.height
+        let positionProposal = ProposedViewSize(width: min(width, ideal.width),
+            height: min(ideal.height, availableHeight, area.height / 3))
+        let size = annotation.sizeThatFits(positionProposal)
+        let x = min(max(anchor.x - size.width / 2, area.minX), max(area.minX, area.maxX - size.width))
+        let y = min(max(useAbove ? aboveEdge - size.height : belowEdge, area.minY), area.maxY - size.height)
+        annotation.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: positionProposal)
+    }
+}
+
+// Report the reader's origin in the same coordinates as the native selection.
+// Observe window input without consuming it, including scrolls in hosted readers.
+#if targetEnvironment(macCatalyst)
+private struct ReaderSelectionAnnotationProbe: UIViewRepresentable {
+    let anchor: SelectionPopoverAnchor
+    var onBoundsChange: (CGRect) -> Void
+    var onInteraction: (CGPoint) -> Void
+    var onDocumentScroll: () -> Void
+
+    func makeUIView(context: Context) -> ReaderSelectionAnnotationProbeView {
+        let view = ReaderSelectionAnnotationProbeView()
+        view.isUserInteractionEnabled = false
+        updateUIView(view, context: context)
+        return view
+    }
+
+    func updateUIView(_ view: ReaderSelectionAnnotationProbeView, context: Context) {
+        view.anchor = anchor
+        view.onBoundsChange = onBoundsChange
+        view.onInteraction = onInteraction
+        view.onDocumentScroll = onDocumentScroll
+    }
+
+    static func dismantleUIView(_ view: ReaderSelectionAnnotationProbeView, coordinator: ()) {
+        view.detach()
+    }
+}
+
+private final class ReaderSelectionAnnotationProbeView: UIView, UIGestureRecognizerDelegate {
+    var anchor: SelectionPopoverAnchor?
+    var onBoundsChange: (CGRect) -> Void = { _ in }
+    var onInteraction: (CGPoint) -> Void = { _ in }
+    var onDocumentScroll: () -> Void = {}
+    private var reportedBounds: CGRect?
+    private weak var observationWindow: UIWindow?
+    private var scrollObservations: [NSKeyValueObservation] = []
+    private lazy var observers: [UIGestureRecognizer] = {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(interacted(_:)))
+        let secondaryTap = UITapGestureRecognizer(target: self, action: #selector(interacted(_:)))
+        secondaryTap.buttonMaskRequired = .secondary
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(interacted(_:)))
+        pan.allowedScrollTypesMask = .all
+        let observers: [UIGestureRecognizer] = [tap, secondaryTap, pan]
+        for observer in observers {
+            observer.cancelsTouchesInView = false
+            observer.delaysTouchesBegan = false
+            observer.delaysTouchesEnded = false
+            observer.delegate = self
+        }
+        return observers
+    }()
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        detach()
+        observationWindow = window
+        if let window {
+            for observer in observers { window.addGestureRecognizer(observer) }
+        }
+        reportBounds()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        reportBounds()
+    }
+
+    func detach() {
+        scrollObservations.removeAll()
+        reportedBounds = nil
+        guard let observationWindow else { return }
+        for observer in observers { observationWindow.removeGestureRecognizer(observer) }
+        self.observationWindow = nil
+    }
+
+    private func reportBounds() {
+        guard !bounds.isEmpty, let origin = SelectionAnchorContentPoint.fromLocalPoint(bounds.origin, in: self) else { return }
+        let rect = CGRect(origin: CGPoint(x: origin.x, y: origin.y), size: bounds.size)
+        guard rect != reportedBounds else { return }
+        reportedBounds = rect
+        DispatchQueue.main.async { [weak self] in
+            guard let self, reportedBounds == rect else { return }
+            observeScrollViews(at: rect)
+            onBoundsChange(rect)
+        }
+    }
+
+    private func observeScrollViews(at rect: CGRect) {
+        scrollObservations.removeAll()
+        guard let anchor, let window else { return }
+        let point = CGPoint(
+            x: min(max(1, anchor.x - rect.minX), max(1, rect.width - 1)),
+            y: min(max(1, anchor.y - rect.minY + (anchor.prefersAbove ? 1 : -1)), max(1, rect.height - 1))
+        )
+        var view = window.hitTest(convert(point, to: window), with: nil)
+        while let ancestor = view {
+            if let scroll = ancestor as? UIScrollView {
+                scrollObservations.append(scroll.observe(\.contentOffset, options: [.old, .new]) { [weak self] _, change in
+                    if change.oldValue != change.newValue {
+                        DispatchQueue.main.async { [weak self] in self?.onDocumentScroll() }
+                    }
+                })
+            }
+            view = ancestor.superview
+        }
+    }
+
+    @objc private func interacted(_ gesture: UIGestureRecognizer) {
+        if gesture.state == .began || gesture.state == .ended {
+            onInteraction(gesture.location(in: self))
+        }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+}
+#else
+private struct ReaderSelectionAnnotationProbe: NSViewRepresentable {
+    let anchor: SelectionPopoverAnchor
+    var onBoundsChange: (CGRect) -> Void
+    var onInteraction: (CGPoint) -> Void
+    var onDocumentScroll: () -> Void
+
+    func makeNSView(context: Context) -> ReaderSelectionAnnotationProbeView {
+        let view = ReaderSelectionAnnotationProbeView()
+        updateNSView(view, context: context)
+        return view
+    }
+
+    func updateNSView(_ view: ReaderSelectionAnnotationProbeView, context: Context) {
+        view.anchor = anchor
+        view.onBoundsChange = onBoundsChange
+        view.onInteraction = onInteraction
+        view.onDocumentScroll = onDocumentScroll
+    }
+
+    static func dismantleNSView(_ view: ReaderSelectionAnnotationProbeView, coordinator: ()) {
+        view.detach()
+    }
+}
+
+private final class ReaderSelectionAnnotationProbeView: NSView {
+    override var isFlipped: Bool { true }
+    var anchor: SelectionPopoverAnchor?
+    var onBoundsChange: (CGRect) -> Void = { _ in }
+    var onInteraction: (CGPoint) -> Void = { _ in }
+    var onDocumentScroll: () -> Void = {}
+    private var reportedBounds: CGRect?
+    private var eventMonitor: Any?
+    private var scrollMonitor: NSObjectProtocol?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        detach()
+        if window != nil {
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] event in
+                if let self, event.window === window {
+                    onInteraction(convert(event.locationInWindow, from: nil))
+                }
+                return event
+            }
+            scrollMonitor = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification, object: nil, queue: .main
+            ) { [weak self] notification in
+                guard let self, let clip = notification.object as? NSClipView, clip.window === window,
+                      let anchor, let readerBounds = reportedBounds else { return }
+                let location = CGPoint(x: anchor.x - readerBounds.minX, y: anchor.y - readerBounds.minY)
+                if clip.bounds.contains(convert(location, to: clip)) {
+                    DispatchQueue.main.async { [weak self] in self?.onDocumentScroll() }
+                }
+            }
+        }
+        reportBounds()
+    }
+
+    override func layout() {
+        super.layout()
+        reportBounds()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func detach() {
+        reportedBounds = nil
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+        if let scrollMonitor {
+            NotificationCenter.default.removeObserver(scrollMonitor)
+            self.scrollMonitor = nil
+        }
+    }
+
+    private func reportBounds() {
+        guard !bounds.isEmpty, let origin = SelectionAnchorContentPoint.fromLocalPoint(bounds.origin, in: self) else { return }
+        let rect = CGRect(origin: CGPoint(x: origin.x, y: origin.y), size: bounds.size)
+        guard rect != reportedBounds else { return }
+        reportedBounds = rect
+        DispatchQueue.main.async { [weak self] in self?.onBoundsChange(rect) }
+    }
+}
+#endif

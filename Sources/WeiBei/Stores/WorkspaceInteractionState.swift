@@ -23,9 +23,9 @@ struct ExcerptRevealRequest: Equatable {
 
 struct ReaderSelectionTranslationRequest: Identifiable {
     let id = UUID()
-    let itemID: String
     let revision: UInt64
-    let text: String
+    let selection: SelectionContext
+    let anchor: SelectionPopoverAnchor
 }
 
 /// Transient selection / floating-agent interaction chrome.

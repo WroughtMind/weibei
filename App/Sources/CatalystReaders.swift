@@ -289,7 +289,9 @@ struct SelectablePlainTextReader: UIViewRepresentable {
                 parent.onSelectionChange("", nil); return
             }
             let rect = textView.selectionRects(for: range).map(\.rect).reduce(CGRect.null) { $0.union($1) }
-            let anchor = rect.isNull ? nil : SelectionAnchorContentPoint.fromLocalPoint(CGPoint(x: rect.midX, y: rect.maxY), in: textView)
+            let anchor = rect.isNull ? nil : SelectionAnchorContentPoint.fromLocalPoint(
+                CGPoint(x: rect.midX, y: rect.maxY), in: textView, selectionHeight: rect.height
+            )
             parent.onSelectionChange(text, anchor)
         }
     }

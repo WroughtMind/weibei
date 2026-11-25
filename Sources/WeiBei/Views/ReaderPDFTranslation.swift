@@ -237,7 +237,7 @@ private struct ReaderPDFSelectableParagraph: UIViewRepresentable {
             }
             let rect = view.selectionRects(for: range).map(\.rect).reduce(CGRect.null) { $0.union($1) }
             let anchor = rect.isNull ? nil : SelectionAnchorContentPoint.fromLocalPoint(
-                CGPoint(x: rect.midX, y: rect.maxY), in: view
+                CGPoint(x: rect.midX, y: rect.maxY), in: view, selectionHeight: rect.height
             )
             onSelectionChange(text, anchor)
         }
@@ -286,18 +286,13 @@ private struct ReaderPDFSelectableParagraph: NSViewRepresentable {
         var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            guard let view = notification.object as? NSTextView,
-                  let window = view.window else { return }
+            guard let view = notification.object as? NSTextView else { return }
             let range = view.selectedRange()
             guard range.length > 0, let stringRange = Range(range, in: view.string) else {
                 onSelectionChange("", nil)
                 return
             }
-            let rect = view.firstRect(forCharacterRange: range, actualRange: nil)
-            let anchor = rect.isEmpty ? nil : SelectionAnchorContentPoint.fromScreenPoint(
-                CGPoint(x: rect.midX, y: rect.minY), in: window
-            )
-            onSelectionChange(String(view.string[stringRange]), anchor)
+            onSelectionChange(String(view.string[stringRange]), SelectionAnchorContentPoint.fromTextRange(range, in: view))
         }
     }
 }
