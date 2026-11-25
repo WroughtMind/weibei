@@ -6,11 +6,14 @@ struct ReaderPDFTranslationPage: Equatable {
     struct Paragraph: Identifiable, Equatable {
         let id: Int
         var text: String
-        var rect: CGRect
     }
 
     let index: Int
     let paragraphs: [Paragraph]
+
+    var translatableParagraphs: [Paragraph] {
+        paragraphs.filter { $0.text.contains(where: \.isLetter) }
+    }
 
     init(page: PDFPage, index: Int, ocr: PDFOCRPage?) {
         self.index = index
@@ -49,13 +52,12 @@ struct ReaderPDFTranslationPage: Equatable {
                 } else {
                     result[last].text += " " + text
                 }
-                result[last].rect = result[last].rect.union(line.rect)
             } else {
-                result.append(Paragraph(id: result.count, text: text, rect: line.rect))
+                result.append(Paragraph(id: result.count, text: text))
             }
             previous = line.rect
         }
-        paragraphs = result.filter { $0.text.contains(where: \.isLetter) }
+        paragraphs = result
     }
 
     private static func continuesParagraph(from previous: CGRect, to next: CGRect) -> Bool {
@@ -69,72 +71,65 @@ struct ReaderPDFTranslationPage: Equatable {
     }
 }
 
-struct ReaderPDFTranslationReveal: Equatable {
-    let id = UUID()
-    let index: Int
-    let rect: CGRect
-}
-
-struct ReaderPDFTranslationPane: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    let page: ReaderPDFTranslationPage?
+struct ReaderPDFBilingualPage: View {
+    let page: ReaderPDFTranslationPage
     let translations: [Int: String]
     let status: ReaderTranslationStatus
-    var reveal: (ReaderPDFTranslationReveal) -> Void
+    let horizontalInset: CGFloat
     var retry: () -> Void
+    @Binding var visibleParagraphID: Int?
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(page.map { store.ui("第 \($0.index + 1) 页译文", "Page \($0.index + 1) translation") }
-                 ?? store.ui("译文", "Translation"))
-                .weiBeiText(13, weight: .semibold)
-            if let page, !translations.isEmpty { paragraphs(on: page).id(page.index) }
-            switch status {
-            case .idle, .translating:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(store.ui("正在翻译…", "Translating…"))
-                }
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-            case .noText:
-                Text(store.ui("本页没有可翻译的文字。", "This page has no translatable text."))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            case let .failed(problem):
-                ReaderTranslationProblemView(problem: problem, offersSettings: true, retry: retry)
-            case .ready:
-                EmptyView()
-            }
-            Spacer(minLength: 0)
-        }
-        .weiBeiText(13)
-        .padding(.top, 42)
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(WeiBeiTheme.paperRaised)
-        .overlay(alignment: .leading) { Rectangle().fill(WeiBeiTheme.hairline).frame(width: 1) }
+    init(
+        page: ReaderPDFTranslationPage,
+        translations: [Int: String],
+        status: ReaderTranslationStatus,
+        horizontalInset: CGFloat,
+        visibleParagraphID: Binding<Int?>,
+        retry: @escaping () -> Void
+    ) {
+        self.page = page
+        self.translations = translations
+        self.status = status
+        self.horizontalInset = horizontalInset
+        _visibleParagraphID = visibleParagraphID
+        self.retry = retry
     }
 
-    private func paragraphs(on page: ReaderPDFTranslationPage) -> some View {
-        let completed = page.paragraphs.compactMap { paragraph in
-            translations[paragraph.id].map { (paragraph, $0) }
-        }
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(completed, id: \.0.id) { paragraph, translated in
-                    Button {
-                        reveal(ReaderPDFTranslationReveal(index: page.index, rect: paragraph.rect))
-                    } label: {
-                        Text(verbatim: translated)
-                            .lineSpacing(3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 24) {
+                ForEach(page.paragraphs) { paragraph in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(verbatim: paragraph.text)
+                        if let translation = translations[paragraph.id] {
+                            Text(verbatim: translation)
+                                .foregroundStyle(WeiBeiTheme.ink.opacity(0.78))
+                                .padding(.leading, 12)
+                                .overlay(alignment: .leading) {
+                                    Rectangle()
+                                        .fill(WeiBeiTheme.accent.opacity(0.45))
+                                        .frame(width: 2)
+                                }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help(store.ui("定位到原文", "Show original passage"))
-                    .accessibilityHint(store.ui("定位到原文", "Show original passage"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .id(paragraph.id)
+                }
+                if case let .failed(problem) = status {
+                    ReaderTranslationProblemView(problem: problem, offersSettings: true, retry: retry)
                 }
             }
+            .scrollTargetLayout()
+            .frame(maxWidth: 680, alignment: .leading)
+            .padding(.horizontal, horizontalInset)
+            .padding(.top, 56)
+            .padding(.bottom, 60)
+            .frame(maxWidth: .infinity)
         }
+        .scrollPosition(id: $visibleParagraphID, anchor: .top)
+        .weiBeiText(15)
+        .lineSpacing(5)
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

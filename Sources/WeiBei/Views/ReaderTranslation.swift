@@ -102,6 +102,7 @@ struct ReaderTranslationMenu: View {
     @Binding var presented: Bool
     var status: ReaderTranslationStatus
     var retry: () -> Void
+    var showsLabel = false
     private var problem: ReaderTranslationProblem? {
         if case let .failed(problem) = status { return problem }
         return nil
@@ -109,10 +110,14 @@ struct ReaderTranslationMenu: View {
 
     var body: some View {
         Button { presented.toggle() } label: {
-            Image(systemName: "character.bubble")
+            HStack(spacing: 4) {
+                Image(systemName: "character.bubble")
+                if showsLabel { Text(store.ui("双语", "Bilingual")) }
+            }
                 .weiBeiText(13, weight: .medium)
                 .foregroundStyle(enabled ? WeiBeiTheme.accent : WeiBeiTheme.secondaryInk)
-                .frame(width: 24, height: 24)
+                .padding(.horizontal, showsLabel ? 6 : 0)
+                .frame(minWidth: 24, minHeight: 24)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -127,7 +132,7 @@ struct ReaderTranslationMenu: View {
                 ReaderTranslationOptions(manageConnections: openConnectionSettings)
                 if enabled {
                     switch status {
-                    case .idle, .translating:
+                    case .translating:
                         Text(store.ui("正在翻译…", "Translating…"))
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     case .noText:
@@ -135,7 +140,7 @@ struct ReaderTranslationMenu: View {
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     case let .failed(problem):
                         ReaderTranslationProblemView(problem: problem, retry: retry)
-                    case .ready:
+                    case .idle, .ready:
                         EmptyView()
                     }
                 } else {

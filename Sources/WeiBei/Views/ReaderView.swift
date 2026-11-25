@@ -276,7 +276,7 @@ struct ReaderView: View {
     @State private var webTranslationStatus: ReaderTranslationStatus = .idle
     @State private var pdfTranslationPage: (itemID: String, revision: UInt64, page: ReaderPDFTranslationPage)?
     @State private var pdfTranslationResult: PDFTranslationResult?
-    @State private var pdfTranslationReveal: ReaderPDFTranslationReveal?
+    @State private var bilingualPDFParagraphPositions: [Int: Int] = [:]
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
 
@@ -297,6 +297,14 @@ struct ReaderView: View {
 
     private var bilingualEnabled: Bool {
         bilingualMaterialID != nil && bilingualMaterialID == store.selectedMaterialItem?.id
+    }
+
+    private var pdfBilingualEnabled: Bool {
+        bilingualEnabled && store.selectedMaterialItem?.kind == .pdf && supportsBilingualReading
+    }
+
+    private var pdfSearchActive: Bool {
+        !store.effectiveReaderSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var translationService: ReaderTranslationService? { translationPreferences.service(in: store) }
@@ -325,7 +333,7 @@ struct ReaderView: View {
     }
 
     private var pdfTranslationRequest: PDFTranslationRequest? {
-        guard store.selectedMaterialItem?.kind == .pdf,
+        guard pdfBilingualEnabled,
               let context = translationContext, let page = visiblePDFTranslationPage else { return nil }
         return PDFTranslationRequest(context: context, page: page)
     }
@@ -342,13 +350,19 @@ struct ReaderView: View {
         return result
     }
 
+    private var bilingualPDFPage: ReaderPDFTranslationPage? {
+        guard pdfBilingualEnabled,
+              let page = visiblePDFTranslationPage, !page.translatableParagraphs.isEmpty else { return nil }
+        return page
+    }
+
     private var translationStatus: ReaderTranslationStatus {
         guard bilingualEnabled else { return .idle }
         guard let service = translationService else { return .failed(.missingConnection) }
         guard !service.model.isEmpty else { return .failed(.missingModel) }
         guard store.selectedMaterialItem?.kind == .pdf else { return webTranslationStatus }
-        guard let page = visiblePDFTranslationPage else { return .idle }
-        if page.paragraphs.isEmpty { return .noText }
+        guard !pdfSearchActive, let page = visiblePDFTranslationPage else { return .idle }
+        if page.translatableParagraphs.isEmpty { return .noText }
         return currentPDFTranslation?.status ?? .translating
     }
 
@@ -361,20 +375,21 @@ struct ReaderView: View {
         bilingualMaterialID = enabled ? store.selectedMaterialItem?.id : nil
         pdfTranslationResult = nil
         pdfTranslationPage = nil
-        pdfTranslationReveal = nil
         retryTranslation()
     }
 
     private func translatePDFPage(_ request: PDFTranslationRequest?) async {
-        guard let request, !request.page.paragraphs.isEmpty, !Task.isCancelled,
-              pdfTranslationRequest == request else { return }
-        pdfTranslationResult = PDFTranslationResult(request: request)
+        guard let request, !Task.isCancelled, !pdfSearchActive,
+              pdfTranslationRequest == request, currentPDFTranslation?.status != .ready else { return }
+        let paragraphs = request.page.translatableParagraphs
+        guard !paragraphs.isEmpty else { return }
+        pdfTranslationResult = PDFTranslationResult(request: request, translations: currentPDFTranslation?.translations ?? [:])
         do {
             try await Task.sleep(for: .milliseconds(220))
-            guard pdfTranslationRequest == request else { return }
-            _ = try await request.context.service.translate(request.page.paragraphs.map(\.text)) { index, translation in
+            guard !pdfSearchActive, pdfTranslationRequest == request else { return }
+            _ = try await request.context.service.translate(paragraphs.map(\.text)) { index, translation in
                 guard !Task.isCancelled, self.pdfTranslationRequest == request else { return }
-                self.pdfTranslationResult?.translations[request.page.paragraphs[index].id] = translation
+                self.pdfTranslationResult?.translations[paragraphs[index].id] = translation
             }
             guard !Task.isCancelled, pdfTranslationRequest == request else { return }
             pdfTranslationResult?.status = .ready
@@ -397,11 +412,10 @@ struct ReaderView: View {
             availableWidth: availableWidth,
             allowed: supportsContentRail && !isImmersive
         )
-        let showsPDFTranslation = !railOnly && bilingualEnabled && supportsBilingualReading
-            && store.selectedMaterialItem?.kind == .pdf
-        let translationWidth = showsPDFTranslation ? min(availableWidth * 0.4, 420) : 0
+        let bilingualPage = railOnly ? nil : bilingualPDFPage
+        let showsBilingualPage = bilingualPage != nil && !pdfSearchActive
         return ZStack(alignment: .bottomTrailing) {
-            HStack(spacing: 0) {
+            ZStack {
                 VStack(spacing: 0) {
                     readerBody
 #if targetEnvironment(macCatalyst)
@@ -409,15 +423,26 @@ struct ReaderView: View {
 #endif
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if showsPDFTranslation {
-                    ReaderPDFTranslationPane(
-                        page: visiblePDFTranslationPage,
+                .opacity(showsBilingualPage ? 0 : 1)
+                .allowsHitTesting(!showsBilingualPage)
+                .accessibilityHidden(showsBilingualPage)
+
+                if let bilingualPage {
+                    ReaderPDFBilingualPage(
+                        page: bilingualPage,
                         translations: currentPDFTranslation?.translations ?? [:],
                         status: translationStatus,
-                        reveal: { pdfTranslationReveal = $0 },
+                        horizontalInset: min(24, availableWidth * 0.06),
+                        visibleParagraphID: Binding(
+                            get: { bilingualPDFParagraphPositions[bilingualPage.index] },
+                            set: { if let id = $0 { bilingualPDFParagraphPositions[bilingualPage.index] = id } }
+                        ),
                         retry: retryTranslation
                     )
-                    .frame(width: translationWidth)
+                    .id(bilingualPage.index)
+                    .opacity(showsBilingualPage ? 1 : 0)
+                    .allowsHitTesting(showsBilingualPage)
+                    .accessibilityHidden(!showsBilingualPage)
                 }
             }
             // Collapsed split hosts have zero width; retain the last measured reader viewport.
@@ -428,12 +453,12 @@ struct ReaderView: View {
 
             if !railOnly, store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
-                    .padding(.trailing, translationWidth + (isImmersive ? 18 : 10))
+                    .padding(.trailing, isImmersive ? 18 : 10)
                     .padding(.bottom, isImmersive ? 18 : 12)
                     .transition(WeiBeiTransition.floating)
             }
 
-            if !railOnly, pdfHasSelectableText == false {
+            if !railOnly, !pdfBilingualEnabled, pdfHasSelectableText == false {
                 pdfTextLayerNotice
                     .padding(.leading, isImmersive ? 18 : 14)
                     .padding(.bottom, isImmersive ? 18 : 14)
@@ -460,7 +485,7 @@ struct ReaderView: View {
                     mark: "READ",
                     title: floatingTitle,
                     appearanceMode: store.appearanceMode,
-                    isPinned: translationMenuPresented,
+                    isPinned: store.selectedMaterialItem?.kind != .pdf && translationMenuPresented,
                     reorderRole: floatingTitleReorderRole
                 ) {
                     HStack(spacing: 8) {
@@ -470,13 +495,8 @@ struct ReaderView: View {
                            !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
                             ExcerptBookButton(itemID: item.id)
                         }
-                        if supportsBilingualReading {
-                            ReaderTranslationMenu(
-                                enabled: Binding(get: { bilingualEnabled }, set: setBilingualReading),
-                                presented: $translationMenuPresented,
-                                status: translationStatus,
-                                retry: retryTranslation
-                            )
+                        if supportsBilingualReading, store.selectedMaterialItem?.kind != .pdf {
+                            translationMenu()
                         }
                         importedDocumentAdaptationControl
                     }
@@ -540,6 +560,7 @@ struct ReaderView: View {
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
             translationMenuPresented = false
+            bilingualPDFParagraphPositions.removeAll()
             setBilingualReading(false)
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
@@ -567,7 +588,7 @@ struct ReaderView: View {
     }
 
     var body: some View {
-        let request = pdfTranslationRequest
+        let request = pdfSearchActive ? nil : pdfTranslationRequest
         return readerPresentation
         .task(id: request) { await translatePDFPage(request) }
         .onAppear {
@@ -585,7 +606,10 @@ struct ReaderView: View {
         .onChange(of: store.selectedMaterialItem?.contentRevision) { _, _ in
             loadMarkdownSnapshot()
             pdfDocumentUnreadable = false
-            pdfTranslationReveal = nil
+            bilingualPDFParagraphPositions.removeAll()
+        }
+        .onChange(of: store.excerptRevealRequest) { _, request in
+            if request != nil, pdfBilingualEnabled { setBilingualReading(false) }
         }
         .onChange(of: store.selectedItemID) { _, _ in
             loadMarkdownSnapshot()
@@ -1155,9 +1179,23 @@ struct ReaderView: View {
         store.consumeReaderPDFPageRequest(requestID)
     }
 
+    private func translationMenu(showsLabel: Bool = false) -> some View {
+        ReaderTranslationMenu(
+            enabled: Binding(get: { bilingualEnabled }, set: setBilingualReading),
+            presented: $translationMenuPresented,
+            status: translationStatus,
+            retry: retryTranslation,
+            showsLabel: showsLabel
+        )
+    }
+
     private var pdfFloatingControls: some View {
-        HStack(spacing: 6) {
-            pdfControls
+        let fillOpacity = PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)
+        let controlOpacity = PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { pdfControls(compact: false) }
+                .fixedSize(horizontal: true, vertical: false)
+            VStack(spacing: 4) { pdfControls(compact: true) }
         }
         .buttonStyle(.plain)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -1165,7 +1203,7 @@ struct ReaderView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfBilingualEnabled ? 1 : fillOpacity))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
                     .opacity(pdfControlsExpanded ? 0.055 : 0.0)
@@ -1177,7 +1215,7 @@ struct ReaderView: View {
                 .stroke(WeiBeiTheme.hairline.opacity(PDFModeChipPresentation.strokeOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)), lineWidth: 1)
         }
         .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsExpanded ? 0.045 : 0.0), radius: 7, y: 3)
-        .opacity(PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering))
+        .opacity(pdfBilingualEnabled ? 1 : controlOpacity)
         .offset(x: 0)
         .scaleEffect(pdfControlsExpanded || reduceMotion ? 1 : 0.985, anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
@@ -1220,22 +1258,43 @@ struct ReaderView: View {
     }
 
     @ViewBuilder
-    private var pdfControls: some View {
-        pdfModeToggle
+    private func pdfControls(compact: Bool) -> some View {
+        if pdfBilingualEnabled {
+            Button { setBilingualReading(false) } label: {
+                if compact {
+                    Image(systemName: "doc.text")
+                } else {
+                    Text(store.ui("PDF 原页", "Original PDF"))
+                }
+            }
+            .weiBeiText(12, weight: .medium)
+            .padding(.horizontal, compact ? 0 : 6)
+            .frame(minWidth: 24, minHeight: 24)
+            .accessibilityLabel(store.ui("PDF 原页", "Original PDF"))
+            .help(store.ui("PDF 原页", "Original PDF"))
+            if translationStatus == .translating {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(store.ui("正在翻译…", "Translating…"))
+            }
+        } else {
+            pdfModeToggle(compact: compact)
+        }
+        if supportsBilingualReading {
+            translationMenu(showsLabel: !compact)
+        }
 
-        if pdfBrowseMode == .page, pdfPageCount > 1 {
+        if (pdfBrowseMode == .page || pdfBilingualEnabled), pdfPageCount > 1 {
             Group {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.55))
-                    .frame(width: 1, height: 16)
-                    .padding(.horizontal, 2)
+                if !compact {
+                    Rectangle()
+                        .fill(WeiBeiTheme.hairline.opacity(0.55))
+                        .frame(width: 1, height: 16)
+                        .padding(.horizontal, 2)
+                }
 
                 Button {
-                    revealPDFControls()
-                    let next = PageNavigator.previous(pdfPageIndex)
-                    guard next != pdfPageIndex else { return }
-                    store.recordReaderPageNavigationPoint()
-                    setVisiblePDFPage(next)
+                    navigatePDFPage(to: PageNavigator.previous(pdfPageIndex))
                 } label: {
                     Image(systemName: "chevron.left")
                 }
@@ -1244,17 +1303,15 @@ struct ReaderView: View {
                 .accessibilityLabel(Text(store.ui("上一页", "Previous page")))
                 .help(store.ui("上一页", "Previous page"))
 
-                Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
-                    .weiBeiText(12, weight: .medium, design: .monospaced)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .frame(width: 50, height: 22)
+                if !compact {
+                    Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
+                        .weiBeiText(12, weight: .medium, design: .monospaced)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .frame(width: 50, height: 22)
+                }
 
                 Button {
-                    revealPDFControls()
-                    let next = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount)
-                    guard next != pdfPageIndex else { return }
-                    store.recordReaderPageNavigationPoint()
-                    setVisiblePDFPage(next)
+                    navigatePDFPage(to: PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount))
                 } label: {
                     Image(systemName: "chevron.right")
                 }
@@ -1267,24 +1324,28 @@ struct ReaderView: View {
         }
     }
 
-    private var pdfModeToggle: some View {
-        Button {
-            withAnimation(WeiBeiMotion.feedback) {
-                pdfBrowseMode = pdfBrowseMode.toggled
-            }
-            revealPDFControls(collapseAfter: 0.85)
-        } label: {
-            HStack(spacing: showsPDFModeLabel ? 5 : 0) {
+    private func navigatePDFPage(to pageIndex: Int) {
+        revealPDFControls()
+        guard pageIndex != pdfPageIndex else { return }
+        store.recordReaderPageNavigationPoint()
+        if pdfBrowseMode == .scroll { pdfRailTargetPageIndex = pageIndex }
+        setVisiblePDFPage(pageIndex)
+    }
+
+    private func pdfModeToggle(compact: Bool) -> some View {
+        let showsLabel = !compact && showsPDFModeLabel
+        return Button(action: togglePDFBrowseMode) {
+            HStack(spacing: showsLabel ? 5 : 0) {
                 Image(systemName: pdfBrowseMode.systemImage)
                     .weiBeiText(12, weight: .semibold)
-                if showsPDFModeLabel {
+                if showsLabel {
                     Text(pdfBrowseMode.label(language: store.interfaceLanguage))
                         .weiBeiText(12, weight: .medium)
                 }
             }
             .foregroundStyle(pdfModeForeground)
-            .padding(.horizontal, showsPDFModeLabel ? 7 : 4)
-            .frame(width: showsPDFModeLabel ? nil : 18, height: 24)
+            .padding(.horizontal, showsLabel ? 7 : 4)
+            .frame(width: showsLabel ? nil : 18, height: 24)
             .weibeiEtchedBackground(
                 fill: WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.08),
                 stroke: WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.18),
@@ -1292,10 +1353,17 @@ struct ReaderView: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .animation(WeiBeiMotion.visibility(showsPDFModeLabel), value: showsPDFModeLabel)
+            .animation(WeiBeiMotion.visibility(showsLabel), value: showsLabel)
         }
         .accessibilityLabel(Text(store.ui("切换 PDF 浏览方式，当前\(pdfBrowseMode.label(language: store.interfaceLanguage))", "Switch PDF browsing mode. Current: \(pdfBrowseMode.label(language: store.interfaceLanguage))")))
         .help(store.ui("切换到\(pdfBrowseMode.toggled.help(language: store.interfaceLanguage))", "Switch to \(pdfBrowseMode.toggled.help(language: store.interfaceLanguage))"))
+    }
+
+    private func togglePDFBrowseMode() {
+        withAnimation(WeiBeiMotion.feedback) {
+            pdfBrowseMode = pdfBrowseMode.toggled
+        }
+        revealPDFControls(collapseAfter: 0.85)
     }
 
     private var pdfControlsActive: Bool {
@@ -1377,7 +1445,7 @@ struct ReaderView: View {
                         },
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
-                        hidesHostedDocument: store.materialPickerPresented,
+                        hidesHostedDocument: store.materialPickerPresented || (bilingualPDFPage != nil && !pdfSearchActive),
                         pageIndex: visiblePDFPageBinding,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
@@ -1399,15 +1467,11 @@ struct ReaderView: View {
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
                         onSelectableTextChange: { available in pdfHasSelectableText = available },
-                        onTranslationPageChange: translationContext == nil ? nil : { page in
+                        onTranslationPageChange: !pdfBilingualEnabled ? nil : { page in
                             guard store.selectedMaterialItem?.id == item.id,
                                   store.selectedMaterialItem?.contentRevision == item.contentRevision,
                                   bilingualEnabled else { return }
                             pdfTranslationPage = (item.id, item.contentRevision, page)
-                        },
-                        translationReveal: visiblePDFTranslationPage != nil ? pdfTranslationReveal : nil,
-                        onTranslationReveal: { id in
-                            if pdfTranslationReveal?.id == id { pdfTranslationReveal = nil }
                         },
                         onDocumentTap: { store.clearReaderSourceHighlight() },
                         onDocumentReadabilityChange: { readable in pdfDocumentUnreadable = !readable }
@@ -1850,8 +1914,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
     var onTranslationPageChange: ((ReaderPDFTranslationPage) -> Void)?
-    var translationReveal: ReaderPDFTranslationReveal?
-    var onTranslationReveal: (UUID) -> Void = { _ in }
     /// X8: fired on a plain tap/click inside the document (ask-underline hits excluded).
     var onDocumentTap: () -> Void = {}
     /// R6: false when PDFKit cannot parse or unlock the file — the host swaps in a failure page.
@@ -2006,8 +2068,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.applyRemarkMarks(remarkMarks, in: view)
         context.coordinator.setActiveRemark(activeRemarkID, in: view)
         context.coordinator.revealRemark(excerptRevealRequest, in: view)
-        context.coordinator.updateTranslation(in: view, onPage: onTranslationPageChange,
-                                              reveal: translationReveal, onReveal: onTranslationReveal)
+        context.coordinator.updateTranslation(in: view, onPage: onTranslationPageChange)
         if paletteChanged { context.coordinator.refreshAccent(in: view) }
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
@@ -2035,7 +2096,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         var onAskUnderlineActivate: (String, SelectionPopoverAnchor?) -> Void
         private var onTranslationPageChange: ((ReaderPDFTranslationPage) -> Void)?
         private var lastTranslationPage: Int?
-        private var lastTranslationReveal: UUID?
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var customAccent: WeiBeiAccentColor?
         private weak var observedView: PDFView?
@@ -2282,7 +2342,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             loadedURL = normalizedURL
             loadedRevision = revision
             lastTranslationPage = nil
-            lastTranslationReveal = nil
             view.document = nil
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
@@ -2641,9 +2700,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
 
         func updateTranslation(
             in view: PDFView,
-            onPage: ((ReaderPDFTranslationPage) -> Void)?,
-            reveal: ReaderPDFTranslationReveal?,
-            onReveal: @escaping (UUID) -> Void
+            onPage: ((ReaderPDFTranslationPage) -> Void)?
         ) {
             let wasEnabled = onTranslationPageChange != nil
             onTranslationPageChange = onPage
@@ -2657,12 +2714,6 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     self.reportTranslationPage(in: view)
                 }
             }
-            if let reveal, lastTranslationReveal != reveal.id,
-               let page = view.document?.page(at: reveal.index) {
-                lastTranslationReveal = reveal.id
-                view.go(to: reveal.rect, on: page)
-                DispatchQueue.main.async { onReveal(reveal.id) }
-            }
         }
 
         private func reportTranslationPage(in view: PDFView) {
@@ -2673,7 +2724,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                   !pendingOCRPageIndexes.contains(index) else { return }
             let result = ReaderPDFTranslationPage(page: page, index: index, ocr: ocrPagesByPageIndex[index])
             // An initial text-layer check can still be running when PDFKit lays out page one.
-            if !result.paragraphs.isEmpty || ocrPagesByPageIndex[index] != nil || nativeTextPageIndexes.contains(index) {
+            if !result.translatableParagraphs.isEmpty || ocrPagesByPageIndex[index] != nil || nativeTextPageIndexes.contains(index) {
                 lastTranslationPage = index
             }
             onTranslationPageChange(result)
