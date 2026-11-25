@@ -2859,6 +2859,11 @@ struct FloatingSelectionAgentView: View {
                 .accessibilityLabel(Text(store.ui("记下这段", "Remark on this passage")))
                 .help(store.ui("记下这段（留空只存原文）", "Remark on this passage (empty saves the passage)"))
             }
+
+            if let selection = store.selectionContext, selection.source == .document {
+                promptSeparator
+                ReaderSelectionTranslationButton(selection: selection)
+            }
         }
         .weiBeiText(13, weight: .medium)
         .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 13, height: 32))

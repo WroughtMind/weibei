@@ -266,10 +266,110 @@ struct ReaderView: View {
     @State private var pendingHTMLVisibleLocation: WebReaderContentRailActiveChange?
     @State private var pendingHTMLContentRailActiveCommit: Task<Void, Never>?
     @State private var markdownSnapshotItemID: String?
+    @State private var markdownSnapshotRevision: UInt64?
     @State private var markdownSnapshotText: String?
     @State private var markdownSnapshotFailed = false
+    private var translationPreferences = ReaderTranslationPreferences()
+    @State private var translationMenuPresented = false
+    @State private var bilingualMaterialID: String?
+    @State private var translationAttempt = UUID()
+    @State private var webTranslationStatus: ReaderTranslationStatus = .idle
+    @State private var pdfTranslationPage: (itemID: String, revision: UInt64, page: ReaderPDFTranslationPage)?
+    @State private var pdfTranslationResult: PDFTranslationResult?
+    @State private var pdfTranslationReveal: ReaderPDFTranslationReveal?
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
+
+    private var supportsBilingualReading: Bool {
+        guard let item = store.selectedMaterialItem, item.url != nil else { return false }
+        return (item.kind == .pdf && !pdfDocumentUnreadable) || item.kind == .html || item.kind == .markdown
+    }
+
+    private var bilingualEnabled: Bool {
+        bilingualMaterialID != nil && bilingualMaterialID == store.selectedMaterialItem?.id
+    }
+
+    private var translationService: ReaderTranslationService? { translationPreferences.service(in: store) }
+
+    private var translationContext: ReaderTranslationContext? {
+        guard bilingualEnabled, supportsBilingualReading, store.showReader,
+              !store.settingsPresented, !store.materialPickerPresented,
+              !ContentRailMetrics.isRailOnly(availableWidth: measuredPaneSize.width,
+                  allowed: supportsContentRail && !isImmersive),
+              let item = store.selectedMaterialItem, let service = translationService, !service.model.isEmpty else {
+            return nil
+        }
+        return ReaderTranslationContext(itemID: item.id, revision: item.contentRevision,
+                                        attempt: translationAttempt, service: service)
+    }
+
+    private struct PDFTranslationRequest: Equatable {
+        let context: ReaderTranslationContext
+        let page: ReaderPDFTranslationPage
+    }
+
+    private struct PDFTranslationResult {
+        let request: PDFTranslationRequest
+        let outcome: Result<[String], ReaderTranslationProblem>
+    }
+
+    private var pdfTranslationRequest: PDFTranslationRequest? {
+        guard store.selectedMaterialItem?.kind == .pdf,
+              let context = translationContext, let page = visiblePDFTranslationPage else { return nil }
+        return PDFTranslationRequest(context: context, page: page)
+    }
+
+    private var visiblePDFTranslationPage: ReaderPDFTranslationPage? {
+        guard let item = store.selectedMaterialItem, let source = pdfTranslationPage,
+              source.itemID == item.id, source.revision == item.contentRevision,
+              source.page.index == pdfPageIndex else { return nil }
+        return source.page
+    }
+
+    private var currentPDFTranslation: Result<[String], ReaderTranslationProblem>? {
+        guard let result = pdfTranslationResult, result.request == pdfTranslationRequest else { return nil }
+        return result.outcome
+    }
+
+    private var translationStatus: ReaderTranslationStatus {
+        guard bilingualEnabled else { return .idle }
+        guard let service = translationService else { return .failed(.missingConnection) }
+        guard !service.model.isEmpty else { return .failed(.missingModel) }
+        guard store.selectedMaterialItem?.kind == .pdf else { return webTranslationStatus }
+        guard let page = visiblePDFTranslationPage else { return .idle }
+        if page.paragraphs.isEmpty { return .noText }
+        switch currentPDFTranslation {
+        case .success: return .ready
+        case let .failure(problem): return .failed(problem)
+        case nil: return .translating
+        }
+    }
+
+    private func retryTranslation() {
+        webTranslationStatus = .idle
+        translationAttempt = UUID()
+    }
+
+    private func setBilingualReading(_ enabled: Bool) {
+        bilingualMaterialID = enabled ? store.selectedMaterialItem?.id : nil
+        pdfTranslationResult = nil
+        pdfTranslationPage = nil
+        pdfTranslationReveal = nil
+        retryTranslation()
+    }
+
+    private func translatePDFPage(_ request: PDFTranslationRequest?) async {
+        guard let request, !request.page.paragraphs.isEmpty else { return }
+        do {
+            try await Task.sleep(for: .milliseconds(220))
+            let translations = try await request.context.service.translate(request.page.paragraphs.map(\.text))
+            try Task.checkCancellation()
+            pdfTranslationResult = PDFTranslationResult(request: request, outcome: .success(translations))
+        } catch {
+            guard !Task.isCancelled else { return }
+            pdfTranslationResult = PDFTranslationResult(request: request, outcome: .failure(ReaderTranslationProblem(error)))
+        }
+    }
 
     private var readerPane: some View {
         // Hang-proof structure:
@@ -284,12 +384,28 @@ struct ReaderView: View {
             availableWidth: availableWidth,
             allowed: supportsContentRail && !isImmersive
         )
+        let showsPDFTranslation = !railOnly && bilingualEnabled && supportsBilingualReading
+            && store.selectedMaterialItem?.kind == .pdf
+        let translationWidth = showsPDFTranslation ? min(availableWidth * 0.4, 420) : 0
         return ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                readerBody
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    readerBody
 #if targetEnvironment(macCatalyst)
-                    .ignoresSafeArea(.container, edges: store.selectedMaterialItem == nil || store.materialPickerPresented ? [] : .top)
+                        .ignoresSafeArea(.container, edges: store.selectedMaterialItem == nil || store.materialPickerPresented ? [] : .top)
 #endif
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if showsPDFTranslation {
+                    ReaderPDFTranslationPane(
+                        page: visiblePDFTranslationPage,
+                        translations: (try? currentPDFTranslation?.get()) ?? [],
+                        status: translationStatus,
+                        reveal: { pdfTranslationReveal = $0 },
+                        retry: retryTranslation
+                    )
+                    .frame(width: translationWidth)
+                }
             }
             // Collapsed split hosts have zero width; retain the last measured reader viewport.
             .frame(width: availableWidth)
@@ -299,7 +415,7 @@ struct ReaderView: View {
 
             if !railOnly, store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
-                    .padding(.trailing, isImmersive ? 18 : 10)
+                    .padding(.trailing, translationWidth + (isImmersive ? 18 : 10))
                     .padding(.bottom, isImmersive ? 18 : 12)
                     .transition(WeiBeiTransition.floating)
             }
@@ -331,6 +447,7 @@ struct ReaderView: View {
                     mark: "READ",
                     title: floatingTitle,
                     appearanceMode: store.appearanceMode,
+                    isPinned: translationMenuPresented,
                     reorderRole: floatingTitleReorderRole
                 ) {
                     HStack(spacing: 8) {
@@ -339,6 +456,14 @@ struct ReaderView: View {
                         if let item = store.selectedMaterialItem,
                            !store.selectionRemarkRecords(forItemID: item.id).isEmpty {
                             ExcerptBookButton(itemID: item.id)
+                        }
+                        if supportsBilingualReading {
+                            ReaderTranslationMenu(
+                                enabled: Binding(get: { bilingualEnabled }, set: setBilingualReading),
+                                presented: $translationMenuPresented,
+                                status: translationStatus,
+                                retry: retryTranslation
+                            )
                         }
                         importedDocumentAdaptationControl
                     }
@@ -401,6 +526,8 @@ struct ReaderView: View {
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
+            translationMenuPresented = false
+            setBilingualReading(false)
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         // Width/height probe as background sibling — never parent of WKWebView/PDFView.
@@ -427,7 +554,9 @@ struct ReaderView: View {
     }
 
     var body: some View {
-        readerPresentation
+        let request = pdfTranslationRequest
+        return readerPresentation
+        .task(id: request) { await translatePDFPage(request) }
         .onAppear {
             loadMarkdownSnapshot()
             syncReaderLocationTitle()
@@ -439,6 +568,11 @@ struct ReaderView: View {
         }
         .onChange(of: store.selectedMaterialItem?.url?.standardizedFileURL) { _, _ in
             discardPendingPDFRestorationIfDocumentChanged()
+        }
+        .onChange(of: store.selectedMaterialItem?.contentRevision) { _, _ in
+            loadMarkdownSnapshot()
+            pdfDocumentUnreadable = false
+            pdfTranslationReveal = nil
         }
         .onChange(of: store.selectedItemID) { _, _ in
             loadMarkdownSnapshot()
@@ -1215,6 +1349,7 @@ struct ReaderView: View {
                     } else {
                     PDFReaderRepresentable(
                         url: url,
+                        contentRevision: item.contentRevision,
                         browseMode: pdfBrowseMode,
                         restorationRequest: pendingPDFRestorationRequest,
                         onRestorationFinished: finishPDFRestoration,
@@ -1251,6 +1386,16 @@ struct ReaderView: View {
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
                         onSelectableTextChange: { available in pdfHasSelectableText = available },
+                        onTranslationPageChange: translationContext == nil ? nil : { page in
+                            guard store.selectedMaterialItem?.id == item.id,
+                                  store.selectedMaterialItem?.contentRevision == item.contentRevision,
+                                  bilingualEnabled else { return }
+                            pdfTranslationPage = (item.id, item.contentRevision, page)
+                        },
+                        translationReveal: visiblePDFTranslationPage != nil ? pdfTranslationReveal : nil,
+                        onTranslationReveal: { id in
+                            if pdfTranslationReveal?.id == id { pdfTranslationReveal = nil }
+                        },
                         onDocumentTap: { store.clearReaderSourceHighlight() },
                         onDocumentReadabilityChange: { readable in pdfDocumentUnreadable = !readable }
                     ) { text, anchor, selectionPageIndex, documentAnchor in
@@ -1302,6 +1447,8 @@ struct ReaderView: View {
                             store.openSelectionRemarkRecord(recordID, anchor: anchor)
                         },
                         onDocumentTap: { store.clearReaderSourceHighlight() },
+                        translationContext: item.kind == .html ? translationContext : nil,
+                        onTranslationStatus: { webTranslationStatus = $0 },
                         interfaceLanguage: store.interfaceLanguage
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -1312,9 +1459,11 @@ struct ReaderView: View {
             case .markdown:
                 if let url = item.url {
                     if markdownSnapshotItemID == item.id,
+                       markdownSnapshotRevision == item.contentRevision,
                        let text = markdownSnapshotText {
                         markdownReader(markdown: text, markdownBaseURL: url.deletingLastPathComponent())
                     } else if markdownSnapshotItemID == item.id,
+                              markdownSnapshotRevision == item.contentRevision,
                               markdownSnapshotFailed {
                         MarkdownReadFailureView(fileName: url.lastPathComponent)
                     } else {
@@ -1366,11 +1515,13 @@ struct ReaderView: View {
               item.kind == .markdown,
               let url = item.url else {
             markdownSnapshotItemID = nil
+            markdownSnapshotRevision = nil
             markdownSnapshotText = nil
             markdownSnapshotFailed = false
             return
         }
         markdownSnapshotItemID = item.id
+        markdownSnapshotRevision = item.contentRevision
         guard let data = try? CourseProjectFileWorker.readBoundedRegularFile(
             at: url,
             maximumByteCount: CourseProjectFileWorker.markdownMaximumByteCount
@@ -1413,6 +1564,8 @@ struct ReaderView: View {
             interfaceLanguage: store.interfaceLanguage,
             selectionAskMarks: selectionAskMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
             selectionRemarkMarks: remarkMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
+            translationContext: translationContext,
+            onTranslationStatus: { webTranslationStatus = $0 },
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
             onSourceReference: { reference in store.openSourceReference(reference) },
             onSelectionAskMark: { threadID, anchor in
@@ -1655,6 +1808,7 @@ private enum ReaderPlatformViewSizing {
 
 struct PDFReaderRepresentable: ReaderRepresentable {
     var url: URL
+    var contentRevision: UInt64 = 0
     var browseMode: PDFBrowseMode
     var restorationRequest: PDFPageRestorationRequest?
     var onRestorationFinished: (PDFPageRestorationRequest, Int?, PDFPageRestorationFinishResolution) -> Void
@@ -1682,6 +1836,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var excerptRevealRequest: ExcerptRevealRequest?
     var onRemarkMarkActivate: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
+    var onTranslationPageChange: ((ReaderPDFTranslationPage) -> Void)?
+    var translationReveal: ReaderPDFTranslationReveal?
+    var onTranslationReveal: (UUID) -> Void = { _ in }
     /// X8: fired on a plain tap/click inside the document (ask-underline hits excluded).
     var onDocumentTap: () -> Void = {}
     /// R6: false when PDFKit cannot parse or unlock the file — the host swaps in a failure page.
@@ -1791,7 +1948,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         if context.coordinator.loadedURL != normalizedURL {
             pageCount = 0
             pageIndex = 0
-            context.coordinator.load(normalizedURL, in: view)
+            context.coordinator.load(normalizedURL, revision: contentRevision, initialPage: 0, in: view)
+        } else if context.coordinator.loadedRevision != contentRevision {
+            context.coordinator.load(normalizedURL, revision: contentRevision, initialPage: pageIndex, in: view)
         }
 
         let mode: PDFDisplayMode = browseMode == .scroll ? .singlePageContinuous : .singlePage
@@ -1834,6 +1993,8 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.applyRemarkMarks(remarkMarks, in: view)
         context.coordinator.setActiveRemark(activeRemarkID, in: view)
         context.coordinator.revealRemark(excerptRevealRequest, in: view)
+        context.coordinator.updateTranslation(in: view, onPage: onTranslationPageChange,
+                                              reveal: translationReveal, onReveal: onTranslationReveal)
         if paletteChanged { context.coordinator.refreshAccent(in: view) }
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
@@ -1859,6 +2020,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         var onSelectableTextChange: (Bool?) -> Void
         var onSelectionChange: (String, SelectionPopoverAnchor?, Int, PDFSelectionAnchor?) -> Void
         var onAskUnderlineActivate: (String, SelectionPopoverAnchor?) -> Void
+        private var onTranslationPageChange: ((ReaderPDFTranslationPage) -> Void)?
+        private var lastTranslationPage: Int?
+        private var lastTranslationReveal: UUID?
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var customAccent: WeiBeiAccentColor?
         private weak var observedView: PDFView?
@@ -2093,7 +2257,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             )
         }
 
-        func load(_ url: URL, in view: PDFView) {
+        var loadedRevision: UInt64 = 0
+
+        func load(_ url: URL, revision: UInt64, initialPage: Int, in view: PDFView) {
             restorationConfirmationWork?.cancel()
             restorationConfirmationWork = nil
             restorationAttemptState.reset()
@@ -2101,6 +2267,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             let generation = loadGeneration
             let normalizedURL = url.standardizedFileURL
             loadedURL = normalizedURL
+            loadedRevision = revision
+            lastTranslationPage = nil
+            lastTranslationReveal = nil
             view.document = nil
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
@@ -2141,7 +2310,9 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     if self.restorationRequest == nil {
-                        self.pageIndex.wrappedValue = 0
+                        let pageIndex = min(initialPage, max((document?.pageCount ?? 0) - 1, 0))
+                        if pageIndex > 0, let page = document?.page(at: pageIndex) { view.go(to: page) }
+                        self.pageIndex.wrappedValue = pageIndex
                     }
                     if firstPageHasText {
                         self.nativeTextPageIndexes = [0]
@@ -2155,6 +2326,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                             in: view
                         )
                     }
+                    self.reportTranslationPage(in: view)
                     if !self.lastSearchQuery.isEmpty {
                         self.applySearch(
                             self.lastSearchQuery,
@@ -2215,6 +2387,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     self.ocrPagesByPageIndex = indexed
                     self.setOCRPageOverlayProvider(indexed.isEmpty ? nil : self, in: view)
                     self.updateSelectableTextState(in: view)
+                    self.reportTranslationPage(in: view)
                     if self.lastSearchQuery.isEmpty {
                         view.layoutDocumentView()
                     } else {
@@ -2288,6 +2461,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     }
                     self.setOCRPageOverlayProvider(self.ocrPagesByPageIndex.isEmpty ? nil : self, in: view)
                     self.updateSelectableTextState(in: view)
+                    self.reportTranslationPage(in: view)
                     if self.lastSearchQuery.isEmpty {
                         view.layoutDocumentView()
                     } else {
@@ -2358,6 +2532,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                     }
                     self.updateSelectableTextState(in: view)
                     self.ensureOCRForCurrentPage(in: view)
+                    self.reportTranslationPage(in: view)
                 }
             }
 #if targetEnvironment(macCatalyst)
@@ -2449,6 +2624,46 @@ struct PDFReaderRepresentable: ReaderRepresentable {
                 pageIndex: selectionPageIndex,
                 documentAnchor: view.document.map { Self.lineAnchor(for: selection, in: $0, pageIndex: selectionPageIndex) }
             )
+        }
+
+        func updateTranslation(
+            in view: PDFView,
+            onPage: ((ReaderPDFTranslationPage) -> Void)?,
+            reveal: ReaderPDFTranslationReveal?,
+            onReveal: @escaping (UUID) -> Void
+        ) {
+            let wasEnabled = onTranslationPageChange != nil
+            onTranslationPageChange = onPage
+            guard onPage != nil else {
+                lastTranslationPage = nil
+                return
+            }
+            if !wasEnabled {
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view else { return }
+                    self.reportTranslationPage(in: view)
+                }
+            }
+            if let reveal, lastTranslationReveal != reveal.id,
+               let page = view.document?.page(at: reveal.index) {
+                lastTranslationReveal = reveal.id
+                view.go(to: reveal.rect, on: page)
+                DispatchQueue.main.async { onReveal(reveal.id) }
+            }
+        }
+
+        private func reportTranslationPage(in view: PDFView) {
+            guard let onTranslationPageChange, let document = view.document, !document.isLocked,
+                  let page = view.currentPage else { return }
+            let index = document.index(for: page)
+            guard index != NSNotFound, index != lastTranslationPage,
+                  !pendingOCRPageIndexes.contains(index) else { return }
+            let result = ReaderPDFTranslationPage(page: page, index: index, ocr: ocrPagesByPageIndex[index])
+            // An initial text-layer check can still be running when PDFKit lays out page one.
+            if !result.paragraphs.isEmpty || ocrPagesByPageIndex[index] != nil || nativeTextPageIndexes.contains(index) {
+                lastTranslationPage = index
+            }
+            onTranslationPageChange(result)
         }
 
         /// 把 PDFSelection 收敛成行矩形锚(页面坐标),供问/记线程与原文标记使用。
@@ -3311,6 +3526,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var onDocumentTap: () -> Void = {}
 
     var onResourceIssuesChange: ([String]) -> Void = { _ in }
+    var translationContext: ReaderTranslationContext?
+    var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     private let customAccent = WeiBeiThemeRuntime.customAccent
 
@@ -3390,6 +3607,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onSelectionAskMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onSelectionRemarkMark: @escaping (String, SelectionPopoverAnchor?) -> Void = { _, _ in },
         onDocumentTap: @escaping () -> Void = {},
+        translationContext: ReaderTranslationContext? = nil,
+        onTranslationStatus: @escaping (ReaderTranslationStatus) -> Void = { _ in },
         interfaceLanguage: WeiBeiInterfaceLanguage = .chinese,
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
@@ -3415,6 +3634,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
         self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionRemarkMark = onSelectionRemarkMark
         self.onDocumentTap = onDocumentTap
+        self.translationContext = translationContext
+        self.onTranslationStatus = onTranslationStatus
         self.interfaceLanguage = interfaceLanguage
         self.onSelectionChange = onSelectionChange
     }
@@ -3528,6 +3749,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
     private func updateReaderView(_ view: WKWebView, context: Context) {
         context.coordinator.updateReduceMotion(reduceMotion, in: view)
         view.isHidden = hidesHostedDocument
+        context.coordinator.translationContext = hidesHostedDocument ? nil : translationContext
+        context.coordinator.onTranslationStatus = onTranslationStatus
         context.coordinator.searchQuery = searchQuery
         context.coordinator.searchNavigationRequest = searchNavigationRequest
         context.coordinator.searchRequestedIndex = searchRequestedIndex
@@ -3561,8 +3784,9 @@ struct WebReaderRepresentable: ReaderRepresentable {
         }
         if let url {
             let office = StudyItemKind.detect(from: url).isOffice
-            let signature = "file:\(url.path)" + (office ? ":\(contentRevision)" : "")
+            let signature = "file:\(url.path):\(contentRevision)"
             if context.coordinator.loadedSignature != signature {
+                context.coordinator.stopTranslationForLoad(in: view)
                 context.coordinator.loadedSignature = signature
                 context.coordinator.lastAppliedSelectionAskMarks = ""
                 if office { context.coordinator.loadOffice(at: url, revision: contentRevision, language: interfaceLanguage, into: view) }
@@ -3573,6 +3797,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         } else if let html {
             let signature = "html:\(html.hashValue)"
             if context.coordinator.loadedSignature != signature {
+                context.coordinator.stopTranslationForLoad(in: view)
                 view.stopLoading()
                 context.coordinator.cancelHTMLLoad()
                 context.coordinator.loadedSignature = signature
@@ -3583,10 +3808,12 @@ struct WebReaderRepresentable: ReaderRepresentable {
             }
         }
         context.coordinator.applyContentRailTarget(in: view)
+        context.coordinator.updateTranslation(in: view)
     }
 
     private static func dismantleReaderView(_ view: WKWebView, coordinator: Coordinator) {
         coordinator.cancelHTMLLoad()
+        coordinator.stopTranslationForLoad(in: view)
         unbindScriptMessages(in: view)
         view.navigationDelegate = nil
     }
@@ -4130,6 +4357,10 @@ struct WebReaderRepresentable: ReaderRepresentable {
         var selectionRemarkMarks = "[]"
         var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
         var onResourceIssuesChange: ([String]) -> Void = { _ in }
+        var translationContext: ReaderTranslationContext?
+        var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
+        private let translation = ReaderWebTranslation()
+        private var translationDocumentReady = false
         var lastAppliedSelectionRemarkMarks = ""
         var htmlReadTask: Task<Data?, Never>?
         var htmlLoadTask: Task<Void, Never>?
@@ -4167,6 +4398,16 @@ struct WebReaderRepresentable: ReaderRepresentable {
             guard interfaceLanguage != language else { return }
             interfaceLanguage = language
             applyInterfaceLanguage(in: view)
+        }
+
+        func stopTranslationForLoad(in view: WKWebView) {
+            translationDocumentReady = false
+            translation.stop(in: view)
+        }
+
+        func updateTranslation(in view: WKWebView) {
+            translation.update(in: view, context: translationDocumentReady ? translationContext : nil,
+                               rootSelector: "body", onStatus: onTranslationStatus)
         }
 
         private var reduceMotion = false
@@ -4488,6 +4729,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
                 self.applySearch(in: webView)
                 self.applyContentRailTarget(in: webView)
                 self.applySelectionMarksIfNeeded()
+                self.translationDocumentReady = true
+                self.updateTranslation(in: webView)
             }
         }
 
@@ -4576,6 +4819,8 @@ private struct MarkdownDocumentReaderView: View {
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var selectionAskMarks: String = "[]"
     var selectionRemarkMarks: String = "[]"
+    var translationContext: ReaderTranslationContext?
+    var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onSelectionAskMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
@@ -4629,7 +4874,9 @@ private struct MarkdownDocumentReaderView: View {
             selectionAskMarks: selectionAskMarks,
             onSelectionAskMark: onSelectionAskMark,
             selectionRemarkMarks: selectionRemarkMarks,
-            onSelectionRemarkMark: onSelectionRemarkMark
+            onSelectionRemarkMark: onSelectionRemarkMark,
+            translationContext: translationContext,
+            onTranslationStatus: onTranslationStatus
         )
     }
 
