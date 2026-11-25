@@ -1022,8 +1022,10 @@ enum CatalystBusinessCheck {
             try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
 
             try await openPDFExport()
-            let exports = inputs.appendingPathComponent("Exported Notes", isDirectory: true)
+            let exports = FileManager.default.temporaryDirectory
+                .appendingPathComponent("weibei-pdf-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: exports) }
             try await activate("note-pdf-save")
             _ = try await onboardingUICommand("save-pdf", id: "note-pdf", value: exports.path)
             try await until("system PDF save finished in the selected folder") {
