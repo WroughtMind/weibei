@@ -3,6 +3,7 @@ import UIKit
 import SwiftUI
 import Combine
 import WebKit
+import PDFKit
 import WeiBeiCore
 import MarkdownView
 import Litext
@@ -756,8 +757,28 @@ enum CatalystBusinessCheck {
             try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
             let materialURL = inputs.appendingPathComponent("候选验证材料.txt")
             try "# 阅读位置\n\n候选独立合成资料：内容增长时保留同一处文字。材料标记 WB452_SOURCE。\n".write(to: materialURL, atomically: true, encoding: .utf8)
-            let noteURL = inputs.appendingPathComponent("候选验证笔记.md")
-            try "# 候选验证笔记\n\n这是独立测试资料，不是用户笔记。\n".write(to: noteURL, atomically: true, encoding: .utf8)
+            let noteTitle = "清晨散步"
+            let noteURL = inputs.appendingPathComponent(noteTitle + ".md")
+            try """
+            # \(noteTitle)
+
+            出门时天还阴着。沿河走到第三座桥，雾刚散开，水面也亮了起来。
+
+            ## 沿途所见
+
+            | 地点 | 记录 |
+            | --- | --- |
+            | 桥头 | 灰鹭停在浅滩，风把水纹推向东岸。 |
+            | 旧书摊 | 带回一本散文集，书页间夹着一张车票。 |
+            | 河边石阶 | 下过雨，石阶上留着几片银杏叶。 |
+
+            > 摊主说，下周还会带几本写这条河的旧书。
+
+            ## 下次再走
+
+            - 查查散文集里提到的那座旧桥。
+            - 从桥头沿河走回书摊，试试半小时能不能走完。
+            """.write(to: noteURL, atomically: true, encoding: .utf8)
             var confirmedItems: [StudyItem] = []
             let importSheet = {
                 // Catalyst can host the sheet outside connectedScenes.windows.
@@ -936,6 +957,86 @@ enum CatalystBusinessCheck {
             let captured = await store.freshActiveNoteEditorSnapshot()
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_editor_snapshot_and_note_write_gate", captured && (try String(contentsOf: persistedNote, encoding: .utf8)).contains(noteMarker))
+
+            let fileCommand = store.ui("导出笔记为 PDF…", "Export Note as PDF…")
+                .lowercased().replacingOccurrences(of: " ", with: "_")
+            func waitForPDFPreview() async throws {
+                // Intel's first accessibility snapshot can outlast the default
+                // control wait. Let pagination reach readiness or report an error.
+                try await until("note PDF preview completed", seconds: 360) {
+                    let control = try await accessibilityElement("note-pdf-save", forInteraction: true)
+                    if let failure = control?["render_error"] { throw Failure("note PDF: " + failure) }
+                    return control?["enabled"] == "true" && control?["hittable"] == "true"
+                }
+            }
+            func openPDFExport() async throws {
+                try await activate("com.apple.menu.file")
+                try await activate(fileCommand)
+                try await waitForPDFPreview()
+            }
+            _ = try await onboardingUICommand("screenshot", id: "Note before PDF export")
+            try await openPDFExport()
+            _ = try await onboardingUICommand("screenshot", id: "Note PDF export")
+            let pageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
+            try check("note_pdf_export_opens_in_app", store.notePDFExportRequest?.itemID == note.id
+                      && pageCount == store.ui("1 页", "1 page"))
+            do {
+                let language = store.interfaceLanguage
+                defer { store.setInterfaceLanguage(language) }
+                store.setInterfaceLanguage(.chinese)
+                try await until("Chinese labels appear in PDF export", seconds: 360) {
+                    try await accessibilityElement("note-pdf-page-count")?["label"] == "1 页"
+                }
+                let defaultLayout = try await accessibilityElement("note-pdf-layout-summary")?["label"]
+                let hiddenSizeControl = try await accessibilityElement("note-pdf-size") == nil
+                try check("note_pdf_export_defaults_to_preview_without_settings",
+                          hiddenSizeControl && defaultLayout == "A4 纵向 · 含页码")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Chinese")
+                try await activate("note-pdf-adjust-layout")
+                try await waitForOnboardingControl("note-pdf-size")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Style Chinese")
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "页面")
+                try await waitForOnboardingControl("note-pdf-logo")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Page Chinese")
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "样式")
+                try await waitForOnboardingControl("note-pdf-size")
+                let updatedPageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
+                try check("note_pdf_export_switches_settings_in_place",
+                          store.notePDFExportRequest?.itemID == note.id && updatedPageCount == "1 页")
+                let initialSize = try await accessibilityElement("note-pdf-size")?["value"]
+                _ = try await onboardingUICommand("drag-slider", id: "note-pdf-size", value: "0.22,0.44")
+                try await until("PDF preview completed after dragging the size slider", seconds: 360) {
+                    let adjustedSize = try await accessibilityElement("note-pdf-size")?["value"]
+                    let saveButton = try await accessibilityElement("note-pdf-save", forInteraction: true)
+                    return initialSize != nil && adjustedSize != nil && adjustedSize != initialSize
+                        && saveButton?["enabled"] == "true" && saveButton?["hittable"] == "true"
+                }
+                try check("note_pdf_export_updates_preview_after_size_adjustment", true)
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "页面")
+                _ = try await onboardingUICommand("press", id: "note-pdf-orientation", value: "横向")
+                try await activate("note-pdf-adjust-layout")
+                try await waitForPDFPreview()
+                let customLayout = try await accessibilityElement("note-pdf-layout-summary")?["label"]
+                try check("note_pdf_export_keeps_direct_choice_after_collapsing", customLayout == "A4 横向 · 含页码")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Landscape Chinese")
+            }
+            try await activate("note-pdf-cancel")
+            try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
+            try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
+
+            try await openPDFExport()
+            let exports = inputs.appendingPathComponent("Exported Notes", isDirectory: true)
+            try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+            try await activate("note-pdf-save")
+            _ = try await onboardingUICommand("save-pdf", id: "note-pdf", value: exports.path)
+            try await until("system PDF save finished in the selected folder") {
+                let files = try FileManager.default.contentsOfDirectory(at: exports, includingPropertiesForKeys: nil)
+                guard let url = files.first(where: { $0.pathExtension == "pdf" }),
+                      let savedDocument = PDFDocument(url: url) else { return false }
+                let text = savedDocument.string?.precomposedStringWithCompatibilityMapping ?? ""
+                return store.notePDFExportRequest == nil && savedDocument.pageCount == 1 && text.contains("编辑器输入")
+            }
+            try check("note_pdf_export_saves_preview_to_disk", store.activeNoteItemID == note.id)
 
             let pdfURL = inputs.appendingPathComponent("bounded-worker.pdf")
             try UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 400, height: 500)).writePDF(to: pdfURL) { context in

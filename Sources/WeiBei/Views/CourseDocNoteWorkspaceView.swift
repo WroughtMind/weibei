@@ -305,6 +305,11 @@ struct CourseDocNoteWorkspaceView: View {
             ) {
                 select(item, kind: kind)
             }
+            .contextMenu {
+                if kind == .notes {
+                    NotePDFExportMenuItem(itemID: item.id)
+                }
+            }
         }
         .background(
             store.recentlyImportedItemIDs.contains(item.id)

@@ -1925,6 +1925,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     var horizontalPadding: CGFloat = 8
     var neutralHoverWhenInactive = false
     var idleOpacity: Double = 0.20
+    var cornerRadius: CGFloat = WeiBeiMetric.controlRadius
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -1936,7 +1937,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
             .frame(height: height)
             .contentShape(Rectangle())
             .background(background(isPressed: configuration.isPressed))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
             .shadow(color: WeiBeiTheme.ink.opacity(hovering ? 0.08 : 0), radius: 2, y: 1)

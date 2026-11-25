@@ -219,6 +219,10 @@ struct ContentView: View {
                 )
             }
         }
+        .sheet(item: $store.notePDFExportRequest) { request in
+            NotePDFExportView(request: request, theme: store.appearanceMode, textScale: textScale)
+                .environmentObject(store)
+        }
         .sheet(isPresented: $store.excerptBookPresented) {
             ExcerptBookView(courseID: store.excerptBookCourseID)
                 .environmentObject(store)

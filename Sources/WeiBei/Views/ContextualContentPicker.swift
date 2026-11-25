@@ -147,6 +147,9 @@ struct ContextualContentPicker: View {
                 .buttonStyle(.plain)
                 .help(store.noteListDisplayTitle(for: item) + "\n" + store.displaySubtitle(for: item))
                 .contextMenu {
+                    if kind == .note {
+                        NotePDFExportMenuItem(itemID: item.id)
+                    }
                     if let id = group.course?.id {
                         Button(store.ui("从本课程移除", "Remove from This Course")) { store.removeItem(item.id, fromCourseID: id) }
                     }

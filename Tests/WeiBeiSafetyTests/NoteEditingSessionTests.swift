@@ -30,37 +30,12 @@ final class NoteEditingSessionTests: XCTestCase {
     }
 
     @MainActor
-    func testSavingLabelAppearsOnlyAfterTheStatusPersists() async throws {
-        let session = NoteEditingSession(
-            documentID: "note-a",
-            savingLabelDelay: .milliseconds(40)
-        )
-        XCTAssertTrue(session.receive(dirtyEvent(for: session, revision: 1)))
-        XCTAssertEqual(session.saveStatus, .saving)
-        XCTAssertFalse(session.showsProlongedSavingLabel)
-
-        let deadline = Date().addingTimeInterval(1)
-        while !session.showsProlongedSavingLabel, Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTAssertTrue(session.showsProlongedSavingLabel)
-
-        XCTAssertTrue(session.markSaved(revision: 1, as: .writtenToFile))
-        XCTAssertEqual(session.saveStatus, .writtenToFile)
-        XCTAssertFalse(session.showsProlongedSavingLabel)
-    }
-
-    @MainActor
-    func testSaveFailureShowsWithoutWaitingForSavingLabel() {
-        let session = NoteEditingSession(
-            documentID: "note-a",
-            savingLabelDelay: .seconds(2)
-        )
+    func testSaveFailureShowsInCurrentNote() {
+        let session = NoteEditingSession(documentID: "note-a")
         XCTAssertTrue(session.receive(dirtyEvent(for: session, revision: 1)))
         session.markSaveFailed(documentID: "note-a")
         XCTAssertEqual(session.saveStatus, .failed)
         XCTAssertTrue(session.saveStatus.showsStatusLabel)
-        XCTAssertFalse(session.showsProlongedSavingLabel)
     }
 
     @MainActor
@@ -94,12 +69,13 @@ final class NoteEditingSessionTests: XCTestCase {
         )
         XCTAssertTrue(
             session.receive(
-                dirtyEvent(for: session, revision: 5)
+                dirtyEvent(for: session, revision: 4)
             )
         )
-        session.requestSnapshot(minimumRevision: 5)
+        session.requestSnapshot()
 
         let first = try XCTUnwrap(commands.first)
+        XCTAssertTrue(session.receive(dirtyEvent(for: session, revision: 5)))
         XCTAssertFalse(
             session.receive(
                 snapshot(for: first, revision: 4, markdown: "old")
@@ -167,6 +143,55 @@ final class NoteEditingSessionTests: XCTestCase {
         XCTAssertEqual(try firstResult?.get().markdown, "shared")
         XCTAssertEqual(try secondResult?.get().markdown, "shared")
         XCTAssertEqual(commands.count, 1)
+    }
+
+    @MainActor
+    func testExportSnapshotReadsWithoutSavingAndCanShareAnAutosave() throws {
+        var commands: [NoteEditorSnapshotRequest] = []
+        var saved: [String] = []
+        let session = NoteEditingSession(
+            documentID: "note-a",
+            onSnapshotRequest: { commands.append($0) },
+            onSnapshotAccepted: { saved.append($0.markdown) }
+        )
+        var exported: String?
+        session.requestSnapshot(persists: false) { exported = try? $0.get().markdown }
+        let export = try XCTUnwrap(commands.last)
+        XCTAssertTrue(session.receive(snapshot(for: export, revision: 0, markdown: "current draft")))
+        XCTAssertEqual(exported, "current draft")
+        XCTAssertTrue(saved.isEmpty)
+
+        session.requestSnapshot(persists: false) { exported = try? $0.get().markdown }
+        session.requestSnapshot()
+        XCTAssertEqual(commands.count, 2)
+        let shared = try XCTUnwrap(commands.last)
+        XCTAssertTrue(session.receive(snapshot(for: shared, revision: 0, markdown: "next draft")))
+        XCTAssertEqual(exported, "next draft")
+        XCTAssertEqual(saved, ["next draft"])
+    }
+
+    @MainActor
+    func testTimedOutExportDiscardsItsLateReadOnlyReply() async throws {
+        var requests: [NoteEditorSnapshotRequest] = []
+        var saved: [String] = []
+        let session = NoteEditingSession(
+            documentID: "note-a",
+            snapshotTimeout: .milliseconds(20),
+            onSnapshotRequest: { requests.append($0) },
+            onSnapshotAccepted: { saved.append($0.markdown) }
+        )
+
+        do {
+            _ = try await session.snapshot(persists: false)
+            XCTFail("export should time out")
+        } catch {
+            XCTAssertEqual(error as? NoteEditingSessionError, .snapshotTimedOut)
+        }
+
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertFalse(session.receive(snapshot(for: request, revision: 1, markdown: "late export")))
+        XCTAssertTrue(saved.isEmpty)
+        XCTAssertFalse(session.dirty)
     }
 
     @MainActor
@@ -251,12 +276,16 @@ final class NoteEditingSessionTests: XCTestCase {
     }
 
     @MainActor
-    func testSnapshotTimesOutInsteadOfHangingLifecycle() async {
+    func testSnapshotWaitTimesOutAndStillAcceptsTheLatestReply() async throws {
+        var requests: [NoteEditorSnapshotRequest] = []
+        var savedText: String?
         let session = NoteEditingSession(
             documentID: "note-a",
             snapshotTimeout: .milliseconds(20),
-            onSnapshotRequest: { _ in }
+            onSnapshotRequest: { requests.append($0) },
+            onSnapshotAccepted: { savedText = $0.markdown }
         )
+        session.receive(dirtyEvent(for: session, revision: 1))
 
         do {
             _ = try await session.snapshot()
@@ -264,6 +293,21 @@ final class NoteEditingSessionTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? NoteEditingSessionError, .snapshotTimedOut)
         }
+        XCTAssertTrue(session.dirty)
+        XCTAssertEqual(session.saveStatus, .saving)
+        XCTAssertFalse(session.saveStatus.showsStatusLabel)
+        let request = try XCTUnwrap(requests.first)
+        var retriedText: String?
+        session.requestSnapshot { result in
+            retriedText = try? result.get().markdown
+        }
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests.last?.requestID, request.requestID)
+        XCTAssertTrue(session.receive(snapshot(for: request, revision: 1, markdown: "Late draft")))
+        XCTAssertEqual(savedText, "Late draft")
+        XCTAssertEqual(retriedText, "Late draft")
+        XCTAssertTrue(session.markSaved(revision: 1, as: .writtenToFile))
+        XCTAssertEqual(session.saveStatus, .writtenToFile)
     }
 
     @MainActor

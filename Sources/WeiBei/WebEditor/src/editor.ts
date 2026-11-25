@@ -69,6 +69,7 @@ declare global {
     weiBeiMarkdownEditable?: boolean;
     weiBeiTypewriterMode?: boolean;
     weiBeiMarkdownCompactPreview?: boolean;
+    weiBeiNotePDF?: boolean;
     weiBeiDocumentID?: string;
     weiBeiDocumentGeneration?: number;
     weiBeiMarkdownBaseURL?: string;
@@ -1578,6 +1579,8 @@ const decorateHtmlBreaks = (decorations: any, text: any, pos: any) => {
   }
 };
 
+const notePDFMermaidRenders = new WeakMap<HTMLElement, Promise<void>>();
+
 const mermaidWidget = (initialSource: any) => {
   const container = document.createElement('div');
   container.className = 'weibei-mermaid-render';
@@ -1592,7 +1595,7 @@ const mermaidWidget = (initialSource: any) => {
     desiredSource = nextSource;
     const request = requestGeneration += 1;
     window.clearTimeout(renderTimer);
-    renderTimer = window.setTimeout(async () => {
+    const render = async () => {
       if (!container.isConnected || request !== requestGeneration) return;
       container.classList.remove('weibei-mermaid-error');
       try {
@@ -1611,7 +1614,15 @@ const mermaidWidget = (initialSource: any) => {
         container.textContent = editorLabel('mermaidFailed', { value: String((error as any)?.message || error) });
       }
       scheduleContentHeightReports();
-    }, debounce ? 300 : 0);
+    };
+    if (window.weiBeiNotePDF) {
+      // Give the decoration time to mount before rendering its SVG.
+      notePDFMermaidRenders.set(container, new Promise<void>((resolve, reject) => {
+        renderTimer = window.setTimeout(() => { void render().then(resolve, reject); }, 0);
+      }));
+    } else {
+      renderTimer = window.setTimeout(render, debounce ? 300 : 0);
+    }
   };
   updateSource(initialSource);
   return { element: container, updateSource };
@@ -3940,6 +3951,7 @@ let editorBuilder = Editor
         image: createReadOnlyImageNodeView,
         math_inline: createReadOnlyMathNodeView,
         math_block: createReadOnlyMathNodeView,
+        ...(window.weiBeiNotePDF ? { embed: createStructuredInlineNodeView } : {}),
       },
     });
     ctx.set(streamingConfig.key, {
@@ -4063,6 +4075,13 @@ editorBuilder
       reportSelection();
     });
     document.addEventListener('scroll', reportActiveHeading, true);
+    if (window.weiBeiNotePDF && window.WeiBeiEditor) {
+      window.WeiBeiEditor.prepareNotePDF = async () => {
+        const diagrams = document.querySelectorAll<HTMLElement>('#editor .weibei-mermaid-render');
+        const math = document.querySelector('#editor .weibei-math-node') ? loadKaTeX() : undefined;
+        await Promise.all([math, ...Array.from(diagrams, diagram => notePDFMermaidRenders.get(diagram))]);
+      };
+    }
     post('editorReady', {});
     window.setTimeout(() => {
       editorReadyPosted = true;
