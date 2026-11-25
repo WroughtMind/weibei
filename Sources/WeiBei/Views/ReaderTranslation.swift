@@ -225,11 +225,7 @@ struct ReaderTranslationProblemView: View {
 
 struct ReaderSelectionTranslationButton: View {
     @EnvironmentObject private var store: WorkspaceStore
-    var selection: SelectionContext
-    private var preferences = ReaderTranslationPreferences()
-    @State private var presented = false
-    @State private var attempt = UUID()
-    @State private var result: Result<String, ReaderTranslationProblem>?
+    let selection: SelectionContext
 
     init(selection: SelectionContext) {
         self.selection = selection
@@ -237,72 +233,90 @@ struct ReaderSelectionTranslationButton: View {
 
     var body: some View {
         Button {
-            result = nil
-            presented = true
+            guard let item = store.selectedMaterialItem, item.id == selection.itemID else { return }
+            store.interaction.readerSelectionTranslation = ReaderSelectionTranslationRequest(
+                itemID: item.id, revision: item.contentRevision, text: selection.text
+            )
+            store.dismissFloatingSelectionAgent()
         } label: {
             Text(store.ui("译", "Translate"))
                 .frame(minWidth: 28)
         }
         .foregroundStyle(WeiBeiTheme.link)
-        .buttonStyle(WeiBeiTextActionButtonStyle(active: presented, fontSize: 13, height: 32))
         .accessibilityLabel(Text(store.ui("翻译选中文字", "Translate selected text")))
         .help(store.ui("翻译选中文字", "Translate selected text"))
-        .popover(isPresented: $presented) {
-            let service = preferences.service(in: store)
-            VStack(alignment: .leading, spacing: 12) {
+    }
+}
+
+struct ReaderSelectionTranslationLine: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
+    let request: ReaderSelectionTranslationRequest
+    let dismiss: () -> Void
+    private var preferences = ReaderTranslationPreferences()
+    @State private var attempt = UUID()
+    @State private var result: Result<String, ReaderTranslationProblem>?
+    @State private var textHeight: CGFloat = 0
+
+    init(request: ReaderSelectionTranslationRequest, dismiss: @escaping () -> Void) {
+        self.request = request
+        self.dismiss = dismiss
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Group {
                 switch result {
                 case let .success(text):
-                    ViewThatFits(in: .vertical) {
-                        translatedText(text).fixedSize(horizontal: false, vertical: true)
-                        ScrollView { translatedText(text) }
+                    ScrollView {
+                        Text(verbatim: text)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
                     }
-                    .frame(maxHeight: 260)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(height: min(textHeight > 0 ? textHeight : 24, 92 * textScale))
                 case let .failure(problem):
                     ReaderTranslationProblemView(problem: problem) { attempt = UUID() }
                 case nil:
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(store.ui("正在翻译…", "Translating…"))
-                    }
-                }
-                Divider()
-                ReaderTranslationOptions {
-                    presented = false
-                    store.settingsPresented = true
+                    Text(store.ui("正在翻译…", "Translating…"))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
             }
-            .weiBeiText(12)
-            .padding(14)
-            .frame(width: 320, alignment: .leading)
-            .environmentObject(store)
-            .task(id: SelectionRequest(selection: selection, service: service, attempt: attempt)) {
-                result = nil
-                guard let service else { result = .failure(.missingConnection); return }
-                do {
-                    guard let text = try await service.translate([selection.text]).first else {
-                        throw ReaderTranslationService.Failure.invalidTranslation
-                    }
-                    try Task.checkCancellation()
-                    result = .success(text)
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    result = .failure(ReaderTranslationProblem(error))
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .accessibilityLabel(store.ui("收起译文", "Dismiss translation"))
+            .help(store.ui("收起译文", "Dismiss translation"))
+        }
+        .weiBeiText(13)
+        .frame(maxWidth: 680)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .background(WeiBeiTheme.paperRaised)
+        .overlay(alignment: .top) { Rectangle().fill(WeiBeiTheme.hairline).frame(height: 1).allowsHitTesting(false) }
+        .task(id: attempt) {
+            result = nil
+            guard let service = preferences.service(in: store) else {
+                result = .failure(.missingConnection)
+                return
+            }
+            do {
+                guard let text = try await service.translate([request.text]).first else {
+                    throw ReaderTranslationService.Failure.invalidTranslation
                 }
+                try Task.checkCancellation()
+                result = .success(text)
+            } catch {
+                guard !Task.isCancelled else { return }
+                result = .failure(ReaderTranslationProblem(error))
             }
         }
-        .onChange(of: selection.id) { _, _ in presented = false }
     }
 
-    private func translatedText(_ text: String) -> some View {
-        Text(verbatim: text)
-            .weiBeiText(15)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private struct SelectionRequest: Equatable {
-        let selection: SelectionContext
-        let service: ReaderTranslationService?
-        let attempt: UUID
-    }
 }

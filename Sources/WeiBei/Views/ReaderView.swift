@@ -558,8 +558,32 @@ struct ReaderView: View {
         }
     }
 
+    private var visibleSelectionTranslation: ReaderSelectionTranslationRequest? {
+        guard let request = interaction.readerSelectionTranslation,
+              let material = store.selectedMaterialItem,
+              material.id == request.itemID, material.contentRevision == request.revision,
+              !ContentRailMetrics.isRailOnly(availableWidth: measuredPaneSize.width,
+                  allowed: supportsContentRail && !isImmersive) else { return nil }
+        return request
+    }
+
     private var readerPresentation: some View {
-        readerPane
+        VStack(spacing: 0) {
+            readerPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Measure the document viewport without the translation line.
+                .background {
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ReaderPaneSizeKey.self, value: geo.size)
+                    }
+                }
+            if let request = visibleSelectionTranslation {
+                ReaderSelectionTranslationLine(request: request) {
+                    interaction.readerSelectionTranslation = nil
+                }
+                .id(request.id)
+            }
+        }
         // SwiftUI chrome (page controls, title, rail) follows opacity. The
         // hosted PDF / web / text views are hidden separately: glass paper is
         // clear, and those views keep drawing through a transparent list.
@@ -584,6 +608,7 @@ struct ReaderView: View {
             }
         }
         .onChange(of: store.selectedMaterialItem?.id) { _, _ in
+            interaction.readerSelectionTranslation = nil
             htmlResourceIssues = []
             htmlIssueDetailsPresented = false
             translationMenuPresented = false
@@ -591,15 +616,6 @@ struct ReaderView: View {
             setBilingualReading(false)
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
-        // Width/height probe as background sibling — never parent of WKWebView/PDFView.
-        .background {
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: ReaderPaneSizeKey.self,
-                    value: geo.size
-                )
-            }
-        }
         .onPreferenceChange(ReaderPaneSizeKey.self) { size in
             guard size.width > 1, size.height > 1 else { return }
             if abs(measuredPaneSize.width - size.width) > 0.5
@@ -631,6 +647,7 @@ struct ReaderView: View {
             discardPendingPDFRestorationIfDocumentChanged()
         }
         .onChange(of: store.selectedMaterialItem?.contentRevision) { _, _ in
+            interaction.readerSelectionTranslation = nil
             loadMarkdownSnapshot()
             pdfDocumentUnreadable = false
             bilingualPDFParagraphPositions.removeAll()
@@ -1473,6 +1490,7 @@ struct ReaderView: View {
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         hidesHostedDocument: store.materialPickerPresented || (bilingualPDFPage != nil && !pdfSearchActive),
+                        clearSelectionRequestID: visibleSelectionTranslation?.id,
                         pageIndex: visiblePDFPageBinding,
                         pageCount: $pdfPageCount,
                         railTargetPageIndex: $pdfRailTargetPageIndex,
@@ -2011,6 +2029,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
     var adaptsDocumentColors: Bool
     /// Glass paper is clear, and PDFView ignores ancestor opacity.
     var hidesHostedDocument = false
+    var clearSelectionRequestID: UUID?
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
     @Binding var railTargetPageIndex: Int?
@@ -2127,6 +2146,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         context.coordinator.onDocumentReadabilityChange = onDocumentReadabilityChange
         context.coordinator.onRestorationFinished = onRestorationFinished
         context.coordinator.updateRestorationRequest(restorationRequest)
+        context.coordinator.clearSelectionIfRequested(clearSelectionRequestID, in: view)
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
@@ -2214,6 +2234,7 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         private var pageObserver: NSObjectProtocol?
         private var eventMonitor: Any?
         private var selectionWork: DispatchWorkItem?
+        private var lastClearSelectionRequestID: UUID?
         private var nativeTextPageIndexes: Set<Int> = []
         private var ocrPagesByPageIndex: [Int: PDFOCRPage] = [:]
         private var visibleOCROverlays: [PDFPage: PDFOCRPageOverlayView] = [:]
@@ -2782,7 +2803,15 @@ struct PDFReaderRepresentable: ReaderRepresentable {
             (observedView as? ReaderPDFView)?.onUserScroll = nil
         }
 
+        func clearSelectionIfRequested(_ id: UUID?, in view: PDFView) {
+            guard let id, id != lastClearSelectionRequestID else { return }
+            lastClearSelectionRequestID = id
+            selectionWork?.cancel()
+            DispatchQueue.main.async { [weak view] in view?.clearSelection() }
+        }
+
         func reportCurrentSelection(in view: PDFView) {
+            guard !view.isHidden else { return }
             let text = PDFReaderOpenSafety.selectionText(in: view)
             guard selectionReportGate.shouldPublish(
                 text: text,
@@ -2864,7 +2893,8 @@ struct PDFReaderRepresentable: ReaderRepresentable {
         ) {
             selectionWork?.cancel()
             let work = DispatchWorkItem { [weak self] in
-                self?.onSelectionChange(text, anchor, pageIndex, documentAnchor)
+                guard let self, self.observedView?.isHidden == false else { return }
+                self.onSelectionChange(text, anchor, pageIndex, documentAnchor)
             }
             selectionWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
