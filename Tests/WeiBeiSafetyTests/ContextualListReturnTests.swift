@@ -69,7 +69,6 @@ final class ContextualListReturnTests: XCTestCase {
             importedItems: [material, noteA, noteB],
             selectedItemID: nil,
             activeNotebookItemID: nil,
-            workspaceLayout: WorkspaceLayout.documentAgentNotes.rawValue,
             showReader: true,
             showAgent: false,
             showNotes: true
@@ -168,11 +167,11 @@ final class ContextualListReturnTests: XCTestCase {
         XCTAssertEqual(store.noteListDisplayTitle(for: renamed), "新的显示名称")
         XCTAssertTrue(store.itemMatchesLibrarySearch(renamed, query: "显示名称"))
         XCTAssertTrue(store.itemMatchesLibrarySearch(renamed, query: "别泄气"))
-        store.layout = .immersiveWriting
+        store.paneState.setDocumentPanes(reader: false, agent: false, notes: true)
         store.revealDocumentSearch()
         XCTAssertTrue(store.showDocumentSearch)
         XCTAssertEqual(store.focusedPane, .notes)
-        XCTAssertEqual(store.layout, .immersiveWriting)
+        XCTAssertEqual(store.visibleDocumentPaneOrder, [.notes])
         store.noteSearch = "正文"
         store.hideDocumentSearch()
         XCTAssertTrue(store.noteSearch.isEmpty)

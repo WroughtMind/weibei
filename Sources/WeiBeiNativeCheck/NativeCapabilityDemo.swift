@@ -118,7 +118,6 @@ enum NativeCapabilityDemo {
         )
         return try await runtime.respond(
             to: StudyAgentRequest(
-                purpose: .conversation,
                 question: question,
                 materialTitle: "",
                 materialText: "",

@@ -107,7 +107,6 @@ public enum NativeSubagentRunner {
         do {
             let reply = try await runtime.respond(
                 to: StudyAgentRequest(
-                    purpose: .conversation,
                     question: question,
                     materialTitle: "",
                     materialText: "",

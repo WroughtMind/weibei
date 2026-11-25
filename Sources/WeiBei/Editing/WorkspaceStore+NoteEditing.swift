@@ -387,8 +387,7 @@ extension WorkspaceStore {
         }
 
         if diskDigest == lastSelfWrittenNoteDigestsByItemID[documentID],
-           noteText.utf8.elementsEqual(diskMarkdown.utf8)
-               || noteText.utf8.elementsEqual(cleanLegacyPlaceholder(diskMarkdown).utf8) {
+           noteText.utf8.elementsEqual(diskMarkdown.utf8) {
             return
         }
         refreshActiveNoteFromBackingFile()

@@ -167,10 +167,7 @@ enum CatalystBusinessCheck {
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
             // --drag-panes=agent-notes (default) | reader-agent | reader-notes
             let panes = CommandLine.arguments.first { $0.hasPrefix("--drag-panes=") }.map { String($0.dropFirst("--drag-panes=".count)) } ?? "agent-notes"
-            store.paneState.showReader = true
-            store.paneState.showAgent = panes != "reader-notes"
-            store.paneState.showNotes = panes != "reader-agent"
-            store.setLayout(.documentAgentNotes)
+            store.paneState.setDocumentPanes(reader: true, agent: panes != "reader-notes", notes: panes != "reader-agent")
             // --drag-content=full opens a real material in the reader and a real note in the
             // editor, like a working session; default leaves both panes at their empty state.
             if CommandLine.arguments.contains("--drag-content=full") {
@@ -900,7 +897,7 @@ enum CatalystBusinessCheck {
                   let persistedNote = store.resolvedLibraryURL(for: note) else { throw Failure("original import returned no material/note") }
             store.openCourseNote(note.id)
             store.paneState.showReader = true; store.paneState.showAgent = true; store.paneState.showNotes = true
-            store.setLayout(.documentAgentNotes)
+            store.paneState.setDocumentPanes(reader: true, agent: true, notes: true)
             try await until("original editor ready") {
                 guard !store.activeNoteIsLoading, store.activeNoteItemID == note.id,
                       let editor = await editor(documentID: store.activeNoteEditorDocumentID) else { return false }
@@ -1025,8 +1022,10 @@ enum CatalystBusinessCheck {
             try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
 
             try await openPDFExport()
-            let exports = inputs.appendingPathComponent("Exported Notes", isDirectory: true)
+            let exports = FileManager.default.temporaryDirectory
+                .appendingPathComponent("weibei-pdf-" + UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: exports) }
             try await activate("note-pdf-save")
             _ = try await onboardingUICommand("save-pdf", id: "note-pdf", value: exports.path)
             try await until("system PDF save finished in the selected folder") {
@@ -1049,7 +1048,8 @@ enum CatalystBusinessCheck {
             let attachmentDirectory = store.currentAttachmentDirectory!
             try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
             let imageURL = attachmentDirectory.appendingPathComponent("candidate-image.png")
-            try Data(contentsOf: Bundle.main.url(forResource: "landscape", withExtension: "png")!).write(to: imageURL, options: .atomic)
+            guard let image = LabFixture.landscapePNG else { throw Failure("candidate attachment fixture is invalid") }
+            try image.write(to: imageURL, options: .atomic)
             try await verifyConnectionOnboarding(store, endpoint: endpoint)
             try check("chat_inline_connection_cancel_retry_models_and_draft", true)
             let activeConnection = store.activeAgentProfileID
@@ -2187,7 +2187,7 @@ enum CatalystBusinessCheck {
         let images = LabImages()
         controller.setImages(images)
         _ = controller.store.setTheme(.weiBei(fontSize: bodySize, appearance: appearance))
-        let imageSource = "lab-image://landscape"
+        let imageSource = LabFixture.landscapeSource
         let imageMessage = AgentMessage(role: .assistant, text: "依据 " + source.label + "，继续推导。 ![合成图](\(imageSource))", source: nil, sources: [source])
         var session = StudySession(title: "引用与图片重绘")
         session.messages = [imageMessage]
@@ -2288,8 +2288,9 @@ enum CatalystBusinessCheck {
 
     private static func measureWorkspaceHistory(_ store: WorkspaceStore) async throws -> [String: Any] {
         guard let originalSession = store.activeStudySessionID else { throw Failure("missing original session") }
-        let originalLayout = store.layout
-        store.setLayout(.immersiveConversation)
+        let originalPanes = (reader: store.showReader, agent: store.showAgent, notes: store.showNotes)
+        store.paneState.setDocumentPanes(reader: false, agent: true, notes: false)
+        store.focus(.agent)
         guard store.createStudySession(courseID: nil) != nil else { throw Failure("history session creation") }
         let beforeController = conversation()
         let beforePreparation = beforeController?.store.preparationMS ?? [:]
@@ -2300,9 +2301,7 @@ enum CatalystBusinessCheck {
             conversation()?.messages.count == 240 && conversation()?.messages.last?.id == history.last?.id.uuidString
         }
         let controller = conversation()!
-        // The immersive host is a separate SwiftUI branch from the three-pane
-        // split; it must extend under the toolbar and carry the fade mask too.
-        try await until("immersive conversation pane fades within the original toolbar") {
+        try await until("single conversation pane fades within the original toolbar") {
             guard let window = controller.collection.window,
                   let pane = descendants(window).compactMap({ $0 as? PersistentPaneHost.Container })
                       .first(where: { !$0.isHidden && $0.bounds.width > 0 }),
@@ -2375,7 +2374,7 @@ enum CatalystBusinessCheck {
         measured["long_answer_blocks"] = controller.messages.last!.blocks.count
         measured["resident_memory_bytes"] = LabMetrics.residentMemory()
         _ = store.activateStudySession(originalSession, expectedCourseID: nil, expectedScopeNeedsReview: false)
-        store.setLayout(originalLayout)
+        store.paneState.setDocumentPanes(reader: originalPanes.reader, agent: originalPanes.agent, notes: originalPanes.notes)
         return measured
     }
 

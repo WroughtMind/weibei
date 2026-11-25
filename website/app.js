@@ -3,12 +3,7 @@ import { chooseDownloadId, downloadTargets, matchDownloadAssets, preferredDownlo
 
 const chapters = [...document.querySelectorAll('.chapter')];
 const railButtons = [...document.querySelectorAll('.scene-rail button')];
-const experiencePages = [...document.querySelectorAll('.experience-page')];
-const experienceLabel = document.querySelector('.experience-mode-label');
 const experienceLayer = document.querySelector('.experience-layer');
-const experiencePager = document.querySelector('.window-pager');
-const experienceTabsContainer = document.querySelector('.experience-tabs');
-const experienceTabs = [...document.querySelectorAll('[data-mode-target]')];
 const themePreviews = [...document.querySelectorAll('.theme-preview')];
 const themesLayer = document.querySelector('.themes-layer');
 const downloadLink = document.querySelector('[data-download-link]');
@@ -36,10 +31,6 @@ document.querySelectorAll('[data-copy-command]').forEach(button => button.addEve
 }));
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const mobileLayout = matchMedia('(max-width: 760px)');
-let activeMode = 0;
-let experiencePaused = false;
-let experienceSelected = false;
-let experienceTimer;
 let activeThemePreview;
 let themePointer;
 let dismissedTheme;
@@ -118,44 +109,6 @@ detectDownloadEnvironment().then(async environment => {
   if (!downloadSelected) selectedDownloadId = chooseDownloadId(matchedDownloads, preferredIds);
   renderDownloadControl();
 });
-
-const setExperienceMode = nextMode => {
-  activeMode = (nextMode + experiencePages.length) % experiencePages.length;
-  experiencePages.forEach((page, index) => {
-    const active = index === activeMode;
-    page.classList.toggle('is-active', active);
-    page.setAttribute('aria-hidden', String(!active));
-  });
-  const mode = experiencePages[activeMode].dataset.mode;
-  experienceLabel.dataset.mode = mode;
-  experienceTabs.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.modeTarget === mode)));
-};
-
-const startExperienceRotation = () => {
-  clearInterval(experienceTimer);
-  experienceTimer = setInterval(() => {
-    if (!experiencePaused && !experienceSelected && !reducedMotion.matches && !document.hidden && document.documentElement.dataset.scene === '2') setExperienceMode(activeMode + 1);
-  }, 4400);
-};
-
-document.querySelectorAll('.window-pager button').forEach(button => {
-  button.addEventListener('click', () => {
-    experienceSelected = true;
-    setExperienceMode(activeMode + Number(button.dataset.direction));
-  });
-});
-
-experienceTabs.forEach(button => button.addEventListener('click', () => {
-  experienceSelected = true;
-  setExperienceMode(experiencePages.findIndex(page => page.dataset.mode === button.dataset.modeTarget));
-}));
-
-[experienceLayer, experiencePager, experienceTabsContainer].forEach(element => {
-  element.addEventListener('pointerenter', () => { experiencePaused = true; });
-  element.addEventListener('pointerleave', () => { experiencePaused = false; startExperienceRotation(); });
-});
-setExperienceMode(0);
-startExperienceRotation();
 
 const themeMotions = new Map();
 
@@ -390,7 +343,7 @@ const observer = new IntersectionObserver(entries => {
   document.documentElement.dataset.scene = String(activeIndex + 1);
   document.querySelector('[data-language-toggle]').hash = activeChapter.id;
   document.querySelector('.hero-tagline').inert = activeIndex !== 0;
-  [experienceLayer, experiencePager, experienceTabsContainer].forEach(element => { element.inert = activeIndex !== 1; });
+  experienceLayer.inert = activeIndex !== 1;
   themesLayer.inert = activeIndex !== 2;
   document.querySelector('.release-layer').inert = activeIndex !== 3;
   if (activeIndex !== 2) resetThemePreview();

@@ -593,7 +593,6 @@ private struct ReaderMaterialPaperShape: Shape {
 struct ReaderView: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Environment(\.weiBeiTextScale) private var textScale
-    var isImmersive = false
     var showsFloatingTitle = false
     var floatingTitleReorderRole: WorkspacePaneRole? = nil
 
@@ -649,11 +648,9 @@ struct ReaderView: View {
     @State private var measuredPaneSize: CGSize = .zero
 
     init(
-        isImmersive: Bool = false,
         showsFloatingTitle: Bool = false,
         floatingTitleReorderRole: WorkspacePaneRole? = nil
     ) {
-        self.isImmersive = isImmersive
         self.showsFloatingTitle = showsFloatingTitle
         self.floatingTitleReorderRole = floatingTitleReorderRole
     }
@@ -678,10 +675,10 @@ struct ReaderView: View {
     private var translationService: ReaderTranslationService? { translationPreferences.service(in: store) }
 
     private var readerTranslationVisible: Bool {
-        store.isPaneToggleActive(.reader)
+        store.isPaneVisible(.reader)
             && !store.courseWorkspacePresented && !store.settingsPresented && !store.materialPickerPresented
             && !ContentRailMetrics.isRailOnly(availableWidth: measuredPaneSize.width,
-                allowed: supportsContentRail && !isImmersive)
+                allowed: supportsContentRail)
     }
 
     private var translationContext: ReaderTranslationContext? {
@@ -801,7 +798,7 @@ struct ReaderView: View {
         let availableHeight = max(measuredPaneSize.height, 1)
         let railOnly = ContentRailMetrics.isRailOnly(
             availableWidth: availableWidth,
-            allowed: supportsContentRail && !isImmersive
+            allowed: supportsContentRail
         )
         let bilingualPage = railOnly ? nil : bilingualPDFPage
         let showsBilingualPage = bilingualPage != nil && !pdfSearchActive
@@ -857,8 +854,8 @@ struct ReaderView: View {
 
             if !railOnly, store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
-                    .padding(.trailing, isImmersive ? 18 : 10)
-                    .padding(.bottom, isImmersive ? 18 : 12)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 12)
                     .transition(WeiBeiTransition.floating)
             } else if !railOnly, supportsBilingualReading {
                 translationMenu(showsLabel: true)
@@ -868,14 +865,14 @@ struct ReaderView: View {
                         stroke: WeiBeiTheme.hairline.opacity(0.24),
                         cornerRadius: 8
                     )
-                    .padding(.trailing, isImmersive ? 18 : 10)
-                    .padding(.bottom, isImmersive ? 18 : 12)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 12)
             }
 
             if !railOnly, !pdfBilingualEnabled, pdfHasSelectableText == false {
                 pdfTextLayerNotice
-                    .padding(.leading, isImmersive ? 18 : 14)
-                    .padding(.bottom, isImmersive ? 18 : 14)
+                    .padding(.leading, 14)
+                    .padding(.bottom, 14)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .transition(WeiBeiTransition.floating)
             }

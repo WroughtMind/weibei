@@ -197,7 +197,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
         let answered = expectation(description: "The interactive operation reaches the model")
         store.selfCheckAgentResponder = { _ in
             answered.fulfill()
-            return StudyAgentReply(text: "回答", backend: .native)
+            return StudyAgentReply(text: "回答")
         }
         defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
         let rejection = store.submitAgentVisualizationAction(
@@ -231,7 +231,7 @@ final class AgentVisualizationSizingTests: XCTestCase {
             XCTAssertTrue(request.question.contains(action))
             XCTAssertTrue(request.question.contains(field))
             submitted.fulfill()
-            return StudyAgentReply(text: "已收到", backend: .native)
+            return StudyAgentReply(text: "已收到")
         }
         defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
         XCTAssertNil(store.submitAgentVisualizationAction(action, payloadJSON: payload))

@@ -86,7 +86,7 @@ struct ContextualContentPicker: View {
         .onAppear { if kind == .note && store.notePickerPresented { searchFocused = true } }
         .sheet(item: $courseEntry) { presentation in
             CourseProjectEntrySheet(
-                initialIntent: presentation.intent,
+
                 cancel: { courseEntry = nil },
                 openCourse: { _ in courseEntry = nil }
             ).environmentObject(store)
@@ -166,7 +166,7 @@ struct ContextualContentPicker: View {
     private var globalActions: some View {
         HStack(spacing: 12) {
             Button(store.ui("新建课程", "New Course")) {
-                courseEntry = CourseProjectEntryPresentation(intent: .create)
+                courseEntry = CourseProjectEntryPresentation()
             }
             .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28, neutralHoverWhenInactive: true, idleOpacity: 0))
             Button(kind == .note ? store.ui("导入笔记…", "Import Notes…") : store.ui("导入资料…", "Import Materials…")) {

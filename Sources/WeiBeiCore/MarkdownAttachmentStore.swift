@@ -404,24 +404,3 @@ public enum MarkdownAttachmentStore {
         return target.path
     }
 }
-
-public enum MarkdownBlockInsertion {
-    public static func insert(_ markdown: String, into text: String, replacing range: NSRange) -> (text: String, cursor: Int) {
-        let nsText = text as NSString
-        let location = max(0, min(range.location, nsText.length))
-        let length = max(0, min(range.length, nsText.length - location))
-        let before = nsText.substring(to: location)
-        let after = nsText.substring(from: location + length)
-        let body = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        var insertion = body
-        if !before.isEmpty && !before.hasSuffix("\n\n") {
-            insertion = "\(before.hasSuffix("\n") ? "\n" : "\n\n")\(insertion)"
-        }
-        if !after.isEmpty && !after.hasPrefix("\n\n") {
-            insertion = "\(insertion)\(after.hasPrefix("\n") ? "\n" : "\n\n")"
-        }
-
-        return ("\(before)\(insertion)\(after)", location + (insertion as NSString).length)
-    }
-}

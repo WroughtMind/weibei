@@ -258,7 +258,6 @@ enum NativeEvalCLI {
 
     private static func evalRequest(id: String, question: String, sessionID: UUID, effort: String, context: String?) -> StudyAgentRequest {
         StudyAgentRequest(
-            purpose: .conversation,
             question: question,
             materialTitle: "利率课程",
             materialText: "利率是资金使用价格的表达。",

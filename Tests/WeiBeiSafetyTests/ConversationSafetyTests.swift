@@ -86,7 +86,7 @@ final class ConversationSafetyTests: XCTestCase {
         let gate = ReplyGate()
         store.selfCheckAgentResponder = { _ in
             await gate.wait()
-            return StudyAgentReply(text: "第一问的回答", backend: .native)
+            return StudyAgentReply(text: "第一问的回答")
         }
         store.saveComposerDraft("第一问", for: id)
         store.submitAgentDraft(sessionID: id)
@@ -163,7 +163,7 @@ final class ConversationSafetyTests: XCTestCase {
         let gate = ReplyGate()
         store.selfCheckAgentResponder = { _ in
             await gate.wait()
-            return StudyAgentReply(text: "不会写完的回答", backend: .native)
+            return StudyAgentReply(text: "不会写完的回答")
         }
         store.saveComposerDraft("主动停止的问题", for: id)
         store.submitAgentDraft(sessionID: id)
@@ -222,7 +222,7 @@ final class ConversationSafetyTests: XCTestCase {
         let (store, id, cleanup) = try makeStore()
         defer { cleanup() }
         store.selfCheckAgentResponder = { _ in
-            StudyAgentReply(text: "原回答正文：这一段必须保住。", backend: .native)
+            StudyAgentReply(text: "原回答正文：这一段必须保住。")
         }
         store.saveComposerDraft("原始问题", for: id)
         store.submitAgentDraft(sessionID: id)
@@ -251,7 +251,7 @@ final class ConversationSafetyTests: XCTestCase {
         let (store, id, cleanup) = try makeStore()
         defer { cleanup() }
         store.selfCheckAgentResponder = { _ in
-            StudyAgentReply(text: "旧回答：停止也不能删。", backend: .native)
+            StudyAgentReply(text: "旧回答：停止也不能删。")
         }
         store.saveComposerDraft("原始问题", for: id)
         store.submitAgentDraft(sessionID: id)
@@ -260,7 +260,7 @@ final class ConversationSafetyTests: XCTestCase {
         let gate = ReplyGate()
         store.selfCheckAgentResponder = { _ in
             await gate.wait()
-            return StudyAgentReply(text: "新回答", backend: .native)
+            return StudyAgentReply(text: "新回答")
         }
         store.regenerateLastAssistantReply()
         try await waitUntil {
@@ -283,7 +283,7 @@ final class ConversationSafetyTests: XCTestCase {
         let (store, id, cleanup) = try makeStore()
         defer { cleanup() }
         store.selfCheckAgentResponder = { _ in
-            StudyAgentReply(text: "", backend: .native)
+            StudyAgentReply(text: "")
         }
         store.saveComposerDraft("会得到空回答的问题", for: id)
         store.submitAgentDraft(sessionID: id)
@@ -308,14 +308,14 @@ final class ConversationSafetyTests: XCTestCase {
         let (store, id, cleanup) = try makeStore()
         defer { cleanup() }
         store.selfCheckAgentResponder = { _ in
-            StudyAgentReply(text: "重新生成前的原回答。", backend: .native)
+            StudyAgentReply(text: "重新生成前的原回答。")
         }
         store.saveComposerDraft("原始问题", for: id)
         store.submitAgentDraft(sessionID: id)
         await store.agentRuns[id]?.agentRequestTask?.value
 
         store.selfCheckAgentResponder = { _ in
-            StudyAgentReply(text: "", backend: .native)
+            StudyAgentReply(text: "")
         }
         store.regenerateLastAssistantReply()
         await store.agentRuns[id]?.agentRequestTask?.value

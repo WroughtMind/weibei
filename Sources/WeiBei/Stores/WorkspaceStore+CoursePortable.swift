@@ -8,16 +8,6 @@ private struct CoursePortableStateWriteRecord {
     let expectedDirectoryIdentity: ImportedFileIdentity
 }
 
-private struct CoursePortableStateCommit {
-    let writes: [CoursePortableStateWriteRecord]
-    let previousRevisions: [UUID: UInt64]
-    let previousDigests: [UUID: String]
-    let previousDirtyCourseIDs: Set<UUID>
-    let previousBlockedCourseIDs: Set<UUID>
-    let previousOversizedCourseIDs: Set<UUID>
-    let previousNeedsBootstrap: Bool
-}
-
 @MainActor
 extension WorkspaceStore {
     // MARK: - 自 WorkspaceStore.swift 原样搬入(课程可携带状态/课程笔记读写/可携带导出,行为未变)
@@ -354,7 +344,7 @@ extension WorkspaceStore {
         for courseID in courseIDs {
             dirtyPortableCourseIDs.insert(courseID)
         }
-        _ = try persistCoursePortableStates(
+        try persistCoursePortableStates(
             courseIDs: courseIDs,
             requiring: courseIDs
         )
@@ -620,7 +610,6 @@ extension WorkspaceStore {
             )
         }
 
-        let portableItemIDs = Set(portableItems.map(\.itemID))
         let noteItemIDs = Set(
             portableItems.lazy.filter(\.isNotebookNote).map(\.itemID)
         )
@@ -628,7 +617,6 @@ extension WorkspaceStore {
         let rawMemoryState = learningMemoryStates.first {
             $0.scope == .course(courseID)
         }
-        let memoryIDs = Set(rawMemoryState?.entries.map(\.id) ?? [])
         let relations = noteSourceLinks.filter {
             noteItemIDs.contains($0.noteItemID)
                 && materialItemIDs.contains($0.sourceItemID)
@@ -638,118 +626,9 @@ extension WorkspaceStore {
                 ? $0.id.uuidString < $1.id.uuidString
                 : $0.createdAt < $1.createdAt
         }
-        let relationIDs = Set(relations.map(\.id))
-        var relationsByID: [UUID: NoteSourceLink] = [:]
-        for relation in relations {
-            relationsByID[relation.id] = relation
-        }
-        let sessions = studySessions.compactMap { current -> StudySession? in
-            guard current.courseID == courseID,
-                  current.scopeNeedsReview == false else {
-                return nil
-            }
-            var portable = current
-            portable.focusItemIDs = portable.focusItemIDs.filter(
-                portableItemIDs.contains
-            )
-            if let materialItemID = portable.materialItemID,
-               !materialItemIDs.contains(materialItemID) {
-                portable.materialItemID = nil
-            }
-            for index in portable.messages.indices {
-                portable.messages[index].toolTrace = []
-                portable.messages[index].toolActivities = []
-                portable.messages[index].sources = portable.messages[index].sources
-                    .filter { source in
-                        guard source.kind != .discussion else { return false }
-                        guard let itemID = source.itemID else {
-                            return source.courseID.map {
-                                $0 == courseID
-                            } ?? true
-                        }
-                        guard portableItemIDs.contains(itemID),
-                              source.courseID.map({
-                                  $0 == courseID
-                              }) ?? true else {
-                            return false
-                        }
-                        switch source.kind {
-                        case .discussion: return false
-                        case .material:
-                            return materialItemIDs.contains(itemID)
-                        case .note:
-                            return noteItemIDs.contains(itemID)
-                        case .selection:
-                            return true
-                        }
-                    }
-                portable.messages[index].actions = portable.messages[index].actions
-                    .filter { action in
-                        guard action.targetItemID.map(
-                            portableItemIDs.contains
-                        ) ?? true,
-                        action.sourceItemID.map(
-                            portableItemIDs.contains
-                        ) ?? true else {
-                            return false
-                        }
-                        switch action.kind {
-                        case .writeNote:
-                            let hasValidTarget = action.targetItemID.map(
-                                noteItemIDs.contains
-                            ) ?? true
-                            return hasValidTarget
-                                && action.createdRelationID == nil
-                        case .createRelation:
-                            let hasValidTarget = action.targetItemID.map(
-                                noteItemIDs.contains
-                            ) ?? true
-                            let hasValidSource = action.sourceItemID.map(
-                                    materialItemIDs.contains
-                                ) ?? true
-                            let hasValidCreatedRelation =
-                                action.createdRelationID.map { relationID in
-                                    guard relationIDs.contains(relationID),
-                                          let relation =
-                                            relationsByID[relationID],
-                                          let targetItemID =
-                                            action.targetItemID,
-                                          let sourceItemID =
-                                            action.sourceItemID else {
-                                        return false
-                                    }
-                                    return relation.noteItemID
-                                        == targetItemID
-                                        && relation.sourceItemID
-                                            == sourceItemID
-                                } ?? true
-                            return hasValidTarget
-                                && hasValidSource
-                                && hasValidCreatedRelation
-                        }
-                    }
-                if var memoryUpdate =
-                    portable.messages[index].memoryUpdate {
-                    memoryUpdate.memoryIDs = memoryUpdate.memoryIDs.filter(
-                        memoryIDs.contains
-                    )
-                    portable.messages[index].memoryUpdate =
-                        memoryUpdate.memoryIDs.isEmpty ? nil : memoryUpdate
-                }
-                if let origin = portable.messages[index].origin,
-                   origin.courseID != courseID
-                    || origin.chatID != portable.id {
-                    portable.messages[index].origin = nil
-                }
-            }
-            return portable
-        }
-        .sorted { $0.createdAt < $1.createdAt }
-        let messageIDsBySessionID = Dictionary(
-            uniqueKeysWithValues: sessions.map {
-                ($0.id, Set($0.messages.map(\.id)))
-            }
-        )
+        let messageIDsBySessionID = Dictionary(uniqueKeysWithValues: studySessions.lazy
+            .filter { $0.courseID == courseID && $0.scopeNeedsReview == false }
+            .map { ($0.id, Set($0.messages.map(\.id))) })
         func sanitizedMemoryProvenance(
             sessionID: UUID?,
             messageID: UUID?
@@ -1486,11 +1365,10 @@ extension WorkspaceStore {
         refreshRuntimeItemURLs()
     }
 
-    @discardableResult
     private func persistCoursePortableStates(
         courseIDs requestedCourseIDs: Set<UUID>? = nil,
         requiring requiredCourseIDs: Set<UUID> = []
-    ) throws -> CoursePortableStateCommit {
+    ) throws {
         let courseIDs = requestedCourseIDs ?? Set(courses.map(\.id))
         let previousRevisions = coursePortableStateRevisions
         let previousDigests = coursePortableStateDigests
@@ -1731,60 +1609,10 @@ extension WorkspaceStore {
             if !conflictedCourseIDs.isEmpty {
                 needsPortableCourseStateBootstrap = true
             }
-            return CoursePortableStateCommit(
-                writes: [],
-                previousRevisions: previousRevisions,
-                previousDigests: previousDigests,
-                previousDirtyCourseIDs: previousDirty,
-                previousBlockedCourseIDs: previousBlocked,
-                previousOversizedCourseIDs: previousOversized,
-                previousNeedsBootstrap: previousNeedsBootstrap
-            )
+            return
         }
         needsPortableCourseStateBootstrap =
             !dirtyPortableCourseIDs.isEmpty
-        return CoursePortableStateCommit(
-            writes: committedWrites,
-            previousRevisions: previousRevisions,
-            previousDigests: previousDigests,
-            previousDirtyCourseIDs: previousDirty,
-            previousBlockedCourseIDs: previousBlocked,
-            previousOversizedCourseIDs: previousOversized,
-            previousNeedsBootstrap: previousNeedsBootstrap
-        )
-    }
-
-    private func rollbackCoursePortableStateCommit(
-        _ commit: CoursePortableStateCommit
-    ) throws {
-        var rollbackFailed = false
-        for write in commit.writes.reversed() {
-            do {
-                try restorePortableStateFile(
-                    at: write.url,
-                    previousData: write.previousData,
-                    attemptedData: write.committedData,
-                    expectedDirectoryIdentity:
-                        write.expectedDirectoryIdentity
-                )
-            } catch {
-                rollbackFailed = true
-            }
-        }
-        coursePortableStateRevisions = commit.previousRevisions
-        coursePortableStateDigests = commit.previousDigests
-        dirtyPortableCourseIDs = commit.previousDirtyCourseIDs
-        blockedPortableCourseIDs = commit.previousBlockedCourseIDs
-        oversizedPortableCourseIDs =
-            commit.previousOversizedCourseIDs
-        needsPortableCourseStateBootstrap =
-            commit.previousNeedsBootstrap
-        if rollbackFailed {
-            // S3：回滚失败仅保留 blocked 标记，不抛拒绝。
-            dirtyPortableCourseIDs.formUnion(commit.previousDirtyCourseIDs)
-            blockedPortableCourseIDs.formUnion(commit.previousBlockedCourseIDs)
-            needsPortableCourseStateBootstrap = true
-        }
     }
 
     private func restorePortableStateFile(

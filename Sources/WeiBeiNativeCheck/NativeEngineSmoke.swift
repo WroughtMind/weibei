@@ -100,7 +100,7 @@ enum NativeEngineSmoke {
             [.textDelta(index: 0, text: "4"), .finish(reason: .stop, replayState: nil)],
         ])
         let reply = try await respond(question: "2+2 等于几？", adapter: adapter)
-        guard reply.backend == .native, reply.text.contains("4"), reply.toolTrace.isEmpty else {
+        guard reply.text.contains("4"), reply.toolTrace.isEmpty else {
             throw NSError(domain: "WeiBei.NativeSmoke", code: 1, userInfo: [NSLocalizedDescriptionKey: "plain QA failed"])
         }
     }
@@ -159,7 +159,6 @@ enum NativeEngineSmoke {
             hostToolHandler: nil
         )
         let request = StudyAgentRequest(
-            purpose: .conversation,
             question: "请详细解释",
             materialTitle: "",
             materialText: "",
@@ -263,7 +262,7 @@ enum NativeEngineSmoke {
             let started = Date()
             let reply = try await runtime.respond(
                 to: StudyAgentRequest(
-                    purpose: .conversation, question: question,
+                    question: question,
                     materialTitle: "", materialText: "", noteTitle: "", noteText: "",
                     projectScope: StudyAgentProjectScope(kind: .global, chatID: chatID),
                     contextRevision: "\(index):\(UUID().uuidString)"
@@ -311,7 +310,7 @@ enum NativeEngineSmoke {
             model: model
         )
         let text = reply.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard reply.backend == .native, text == "4" else {
+        guard text == "4" else {
             throw NSError(domain: "WeiBei.NativeSmoke", code: 7, userInfo: [NSLocalizedDescriptionKey: "\(label) plain QA did not answer the arithmetic question correctly"])
         }
         print("\(label) plain-qa prefix=\(text.prefix(40)) tools=\(reply.toolTrace.joined(separator: ","))")
@@ -368,7 +367,6 @@ enum NativeEngineSmoke {
             hostToolHandler: nil
         )
         let request = StudyAgentRequest(
-            purpose: .conversation,
             question: "请从1连续写到200，每个数字单独一行，不要省略。",
             materialTitle: "",
             materialText: "",
@@ -482,7 +480,7 @@ enum NativeEngineSmoke {
         let model = ProcessInfo.processInfo.environment["WEIBEI_NATIVE_BASELINE_MODEL"] ?? "deepseek-chat"
         let adapter = OpenAIChatCompletionsProvider(apiKey: apiKey)
         let reply = try await respond(question: "2+2 等于几？只回答一个数字。", adapter: adapter, model: model)
-        guard reply.backend == .native, !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NSError(domain: "WeiBei.NativeSmoke", code: 6, userInfo: [NSLocalizedDescriptionKey: "DeepSeek native reply was empty"])
         }
         print("native-deepseek-smoke text-prefix=\(reply.text.prefix(40))")
@@ -505,7 +503,6 @@ enum NativeEngineSmoke {
         )
         return try await runtime.respond(
             to: StudyAgentRequest(
-                purpose: .conversation,
                 question: question,
                 materialTitle: "利率课程",
                 materialText: "利率是资金使用价格的表达。",

@@ -103,7 +103,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
             var calls = 0
             store.selfCheckAgentResponder = { _ in
                 calls += 1
-                return StudyAgentReply(text: "已回答", backend: .native)
+                return StudyAgentReply(text: "已回答")
             }
             defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
             let session = try XCTUnwrap(store.activeStudySessionID)
@@ -139,7 +139,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
         f.store.agentRuns[session] = initial
         f.store.agentProviderID = .openai
         f.store.modelName = "mock"
-        f.store.selfCheckAgentResponder = { _ in StudyAgentReply(text: "实际提交入口已执行", backend: .native) }
+        f.store.selfCheckAgentResponder = { _ in StudyAgentReply(text: "实际提交入口已执行") }
         defer { f.store.selfCheckAgentResponder = nil; f.store.cancelAllAgentRequests() }
         for question in ["第一问", "第二问"] {
             f.store.saveComposerDraft(question, for: session)
@@ -388,7 +388,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
             let material = root.appendingPathComponent("讲义.txt")
             try "原始资料".write(to: material, atomically: true, encoding: .utf8)
             let operation = Task { () throws -> Bool in
-                do { _ = try await f.store.adoptCourseFolderOrProposeRebindAsync(at: root, title: "旧课程"); return true }
+                do { _ = try await f.store.adoptCourseFolderAsync(at: root, title: "旧课程"); return true }
                 catch is CancellationError { return false }
             }
             let request = try await waitForUserOperationRisk(f.store.userOperationRisks)
@@ -485,7 +485,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let content = String(repeating: "正文", count: 100_000)
         let arguments = try JSONSerialization.data(withJSONObject: ["title": "文稿", "format": "markdown", "content": content])
-        let request = StudyAgentRequest(purpose: .conversation, question: "保存这份文稿", materialTitle: "",
+        let request = StudyAgentRequest(question: "保存这份文稿", materialTitle: "",
             materialText: "", noteTitle: "", noteText: "", contextRevision: "test")
         let result = try await registry.execute(NativeToolCallRequest(name: "create_document",
             argumentsJSON: String(decoding: arguments, as: UTF8.self), callID: "document"),
@@ -503,7 +503,7 @@ final class UserInitiatedOperationsTests: XCTestCase {
         let arguments = try JSONSerialization.data(withJSONObject: [
             "id": "课堂对比 图一", "spec": ["type": "text", "content": content],
         ])
-        let request = StudyAgentRequest(purpose: .conversation, question: "展示全部内容", materialTitle: "",
+        let request = StudyAgentRequest(question: "展示全部内容", materialTitle: "",
             materialText: "", noteTitle: "", noteText: "", contextRevision: "test")
         let result = try await registry.execute(NativeToolCallRequest(name: "render_ui",
             argumentsJSON: String(decoding: arguments, as: UTF8.self), callID: "ui"),
