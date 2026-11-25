@@ -25,11 +25,31 @@ struct HoverTitleRename {
     let begin, commit, cancel: () -> Void
 }
 
+private struct ImmersiveTitleMaterial: ViewModifier {
+    let isDark: Bool
+
+    var edge: Color { WeiBeiTheme.hairline.opacity(isDark ? 0.42 : 0.48) }
+    var shadow: Color { WeiBeiTheme.ink.opacity(isDark ? 0.28 : 0.08) }
+
+    func body(content: Content) -> some View {
+        content
+            .background { surface(RoundedRectangle(cornerRadius: 8)).allowsHitTesting(false) }
+            .shadow(color: shadow, radius: 9, y: 4)
+    }
+
+    func surface<Outline: Shape>(_ outline: Outline) -> some View {
+        outline
+            .fill(WeiBeiTheme.paperRaised.opacity(isDark ? 0.88 : 0.92))
+            .overlay { outline.stroke(edge, lineWidth: 1) }
+    }
+}
+
 struct ImmersiveHoverTitleView<Actions: View>: View {
     let mark: String
     let title: String
     let appearanceMode: WeiBeiAppearanceMode
     var isPinned = false
+    var topInset: CGFloat = 7
     var reorderRole: WorkspacePaneRole?
     var titleRename: HoverTitleRename?
     @ViewBuilder var actions: () -> Actions
@@ -48,6 +68,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         title: String,
         appearanceMode: WeiBeiAppearanceMode,
         isPinned: Bool = false,
+        topInset: CGFloat = 7,
         reorderRole: WorkspacePaneRole? = nil,
         titleRename: HoverTitleRename? = nil,
         @ViewBuilder actions: @escaping () -> Actions
@@ -56,12 +77,14 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         self.title = title
         self.appearanceMode = appearanceMode
         self.isPinned = isPinned
+        self.topInset = topInset
         self.reorderRole = reorderRole
         self.titleRename = titleRename
         self.actions = actions
     }
 
     var body: some View {
+        let material = ImmersiveTitleMaterial(isDark: appearanceMode.isDark)
         // CRITICAL: do NOT use maxHeight: .infinity. That expands the overlay's hit-test
         // region over the whole reader/chat pane and kills PDF/text selection + the
         // selection float capsule. Stay top-aligned and only as tall as the strip/chip;
@@ -101,16 +124,8 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 34)
-                .background {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48), lineWidth: 1)
-                        }
-                }
-                .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.28 : 0.08), radius: 9, y: 4)
-                .padding(.top, 7)
+                .modifier(material)
+                .padding(.top, topInset)
                 .contentShape(Rectangle())
                 .onHover(perform: updateVisibility)
                 // 编辑期间禁用整条拖拽重排，避免高优先级 DragGesture 劫持文本框内的点选。
@@ -287,6 +302,10 @@ struct ReaderMaterialTabs: ViewModifier {
     private let paperWidth: CGFloat = 34
     private let exposedWidth: CGFloat = 18
 
+    private var material: ImmersiveTitleMaterial {
+        ImmersiveTitleMaterial(isDark: store.appearanceMode.isDark)
+    }
+
     func body(content: Content) -> some View {
         let materials = isVisible ? store.readerTabMaterials : []
         VStack(spacing: 0) {
@@ -312,11 +331,6 @@ struct ReaderMaterialTabs: ViewModifier {
                             maximumWidth: 248 * textScale
                         ) {
                             unfoldedPaper(item)
-                            Rectangle()
-                                .fill(WeiBeiTheme.paperRaised)
-                                .overlay(WeiBeiTheme.accentSoft)
-                                .allowsHitTesting(false)
-                                .accessibilityHidden(true)
                         }
                         .transition(reduceMotion ? .opacity : .scale(scale: 0.88, anchor: hinge).combined(with: .opacity))
                     }
@@ -333,20 +347,23 @@ struct ReaderMaterialTabs: ViewModifier {
     private func tabStrip(_ materials: [StudyItem]) -> some View {
         let height = max(29, 24 * textScale + 4)
         return HStack(spacing: 0) {
-            ScrollViewReader { scroll in
-                ScrollView(.horizontal) {
-                    HStack(alignment: .bottom, spacing: 0) {
-                        ForEach(Array(materials.enumerated()), id: \.element.id) { index, item in
-                            compactPaper(item, index: index, isLast: index == materials.count - 1)
-                                .id(item.id)
+            GeometryReader { viewport in
+                ScrollViewReader { scroll in
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .bottom, spacing: 0) {
+                            ForEach(Array(materials.enumerated()), id: \.element.id) { index, item in
+                                compactPaper(item, index: index, isLast: index == materials.count - 1)
+                                    .id(item.id)
+                            }
                         }
+                        .padding(.horizontal, horizontalInset)
+                        .frame(minWidth: viewport.size.width)
+                        .frame(height: height, alignment: .bottom)
                     }
-                    .padding(.horizontal, horizontalInset)
-                    .frame(height: height, alignment: .bottom)
-                }
-                .scrollIndicators(.hidden)
-                .onChange(of: store.selectedItemID, initial: true) { _, id in
-                    if let id { scroll.scrollTo(id) }
+                    .scrollIndicators(.hidden)
+                    .onChange(of: store.selectedItemID, initial: true) { _, id in
+                        if let id { scroll.scrollTo(id) }
+                    }
                 }
             }
             if store.selectedMaterialItem != nil, !store.materialPickerPresented {
@@ -355,11 +372,6 @@ struct ReaderMaterialTabs: ViewModifier {
             }
         }
         .frame(height: height)
-        .background(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.48))
-                .frame(height: 1)
-        }
         .background(WeiBeiTheme.paper)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(store.ui("已打开的资料", "Open materials"))
@@ -376,7 +388,7 @@ struct ReaderMaterialTabs: ViewModifier {
             Color.clear
                 .frame(width: isLast ? paperWidth : exposedWidth, height: height)
                 .background(alignment: .bottomLeading) {
-                    ReaderMaterialPaper(marked: selected || hover.expandedID == item.id, lifted: false)
+                    ReaderMaterialPaper(material: material, isSelected: selected)
                         .frame(width: paperWidth, height: height)
                         .allowsHitTesting(false)
                 }
@@ -401,7 +413,7 @@ struct ReaderMaterialTabs: ViewModifier {
                 store.selectReaderTab(item.id)
             } label: {
                 Text(title)
-                    .weiBeiText(12, weight: .semibold)
+                    .weiBeiText(12, weight: .medium)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .padding(.leading, 10)
@@ -410,7 +422,7 @@ struct ReaderMaterialTabs: ViewModifier {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(WeiBeiTheme.ink)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
             .help(title + "\n" + store.displaySubtitle(for: item))
 
             Button {
@@ -425,10 +437,7 @@ struct ReaderMaterialTabs: ViewModifier {
             .padding(.trailing, 4)
             .layoutPriority(1)
         }
-        .background {
-            ReaderMaterialPaper(marked: true, lifted: true)
-                .allowsHitTesting(false)
-        }
+        .modifier(material)
         .contentShape(Rectangle())
         .onHover { hover.update($0, itemID: item.id, in: .unfolded) }
     }
@@ -459,40 +468,19 @@ private struct ReaderMaterialPaperPlacement: Layout {
         let size = paper.sizeThatFits(ProposedViewSize(width: width, height: nil))
         let left = max(inset, min(tabBounds.minX, bounds.width - inset - size.width))
         paper.place(
-            at: CGPoint(x: bounds.minX + left, y: bounds.minY + tabBounds.maxY - 1),
+            at: CGPoint(x: bounds.minX + left, y: bounds.minY + tabBounds.maxY - 3),
             anchor: .topLeading,
             proposal: ProposedViewSize(size)
         )
-        // The crease joins the two surfaces without a border across the hinge.
-        let seamLeft = max(left, tabBounds.minX) + 1
-        let seamRight = min(left + size.width, tabBounds.maxX) - 1
-        if let seam = subviews.dropFirst().first, seamRight > seamLeft {
-            seam.place(
-                at: CGPoint(x: bounds.minX + seamLeft, y: bounds.minY + tabBounds.maxY - 3),
-                anchor: .topLeading,
-                proposal: ProposedViewSize(width: seamRight - seamLeft, height: 4)
-            )
-        }
     }
 }
 
 private struct ReaderMaterialPaper: View {
-    let marked: Bool
-    let lifted: Bool
+    let material: ImmersiveTitleMaterial
+    let isSelected: Bool
 
     var body: some View {
-        let outline = ReaderMaterialPaperShape()
-        outline
-            .fill(WeiBeiTheme.paperRaised)
-            .overlay {
-                outline.fill(marked ? WeiBeiTheme.accentSoft : WeiBeiTheme.paperInset.opacity(0.45))
-            }
-            .overlay {
-                outline.fill(.linearGradient(
-                    colors: [.white.opacity(0.17), .black.opacity(0.06)],
-                    startPoint: .top, endPoint: .bottom
-                ))
-            }
+        material.surface(ReaderMaterialPaperShape())
             .overlay(alignment: .topTrailing) {
                 Path { path in
                     path.move(to: .zero)
@@ -500,13 +488,19 @@ private struct ReaderMaterialPaper: View {
                     path.addLine(to: CGPoint(x: 0, y: 6))
                     path.closeSubpath()
                 }
-                .fill(.black.opacity(0.10))
+                .fill(material.edge)
                 .frame(width: 6, height: 6)
             }
-            .overlay {
-                outline.stroke(marked ? WeiBeiTheme.accent.opacity(0.43) : WeiBeiTheme.hairline.opacity(0.66), lineWidth: 0.75)
+            .overlay(alignment: .topLeading) {
+                if isSelected {
+                    Capsule()
+                        .fill(WeiBeiTheme.accent.opacity(0.66))
+                        .frame(width: 7, height: 1)
+                        .padding(.leading, 5)
+                        .padding(.top, 5)
+                }
             }
-            .shadow(color: .black.opacity(lifted ? 0.17 : 0.13), radius: lifted ? 4 : 1, x: -1, y: lifted ? 2 : 0)
+            .shadow(color: material.shadow.opacity(0.45), radius: 2, y: 1)
     }
 }
 
@@ -643,6 +637,7 @@ struct ReaderView: View {
                     mark: "READ",
                     title: floatingTitle,
                     appearanceMode: store.appearanceMode,
+                    topInset: 0,
                     reorderRole: floatingTitleReorderRole
                 ) {
                     HStack(spacing: 8) {
