@@ -78,7 +78,7 @@ struct ReaderPDFTranslationReveal: Equatable {
 struct ReaderPDFTranslationPane: View {
     @EnvironmentObject private var store: WorkspaceStore
     let page: ReaderPDFTranslationPage?
-    let translations: [String]
+    let translations: [Int: String]
     let status: ReaderTranslationStatus
     var reveal: (ReaderPDFTranslationReveal) -> Void
     var retry: () -> Void
@@ -88,6 +88,7 @@ struct ReaderPDFTranslationPane: View {
             Text(page.map { store.ui("第 \($0.index + 1) 页译文", "Page \($0.index + 1) translation") }
                  ?? store.ui("译文", "Translation"))
                 .weiBeiText(13, weight: .semibold)
+            if let page, !translations.isEmpty { paragraphs(on: page).id(page.index) }
             switch status {
             case .idle, .translating:
                 HStack(spacing: 8) {
@@ -101,7 +102,7 @@ struct ReaderPDFTranslationPane: View {
             case let .failed(problem):
                 ReaderTranslationProblemView(problem: problem, offersSettings: true, retry: retry)
             case .ready:
-                if let page { paragraphs(on: page).id(page.index) }
+                EmptyView()
             }
             Spacer(minLength: 0)
         }
@@ -115,9 +116,12 @@ struct ReaderPDFTranslationPane: View {
     }
 
     private func paragraphs(on page: ReaderPDFTranslationPage) -> some View {
-        ScrollView {
+        let completed = page.paragraphs.compactMap { paragraph in
+            translations[paragraph.id].map { (paragraph, $0) }
+        }
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(zip(page.paragraphs, translations)), id: \.0.id) { paragraph, translated in
+                ForEach(completed, id: \.0.id) { paragraph, translated in
                     Button {
                         reveal(ReaderPDFTranslationReveal(index: page.index, rect: paragraph.rect))
                     } label: {

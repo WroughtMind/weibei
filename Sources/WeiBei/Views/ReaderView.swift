@@ -320,7 +320,8 @@ struct ReaderView: View {
 
     private struct PDFTranslationResult {
         let request: PDFTranslationRequest
-        let outcome: Result<[String], ReaderTranslationProblem>
+        var translations: [Int: String] = [:]
+        var status: ReaderTranslationStatus = .translating
     }
 
     private var pdfTranslationRequest: PDFTranslationRequest? {
@@ -336,9 +337,9 @@ struct ReaderView: View {
         return source.page
     }
 
-    private var currentPDFTranslation: Result<[String], ReaderTranslationProblem>? {
+    private var currentPDFTranslation: PDFTranslationResult? {
         guard let result = pdfTranslationResult, result.request == pdfTranslationRequest else { return nil }
-        return result.outcome
+        return result
     }
 
     private var translationStatus: ReaderTranslationStatus {
@@ -348,11 +349,7 @@ struct ReaderView: View {
         guard store.selectedMaterialItem?.kind == .pdf else { return webTranslationStatus }
         guard let page = visiblePDFTranslationPage else { return .idle }
         if page.paragraphs.isEmpty { return .noText }
-        switch currentPDFTranslation {
-        case .success: return .ready
-        case let .failure(problem): return .failed(problem)
-        case nil: return .translating
-        }
+        return currentPDFTranslation?.status ?? .translating
     }
 
     private func retryTranslation() {
@@ -369,15 +366,21 @@ struct ReaderView: View {
     }
 
     private func translatePDFPage(_ request: PDFTranslationRequest?) async {
-        guard let request, !request.page.paragraphs.isEmpty else { return }
+        guard let request, !request.page.paragraphs.isEmpty, !Task.isCancelled,
+              pdfTranslationRequest == request else { return }
+        pdfTranslationResult = PDFTranslationResult(request: request)
         do {
             try await Task.sleep(for: .milliseconds(220))
-            let translations = try await request.context.service.translate(request.page.paragraphs.map(\.text))
-            try Task.checkCancellation()
-            pdfTranslationResult = PDFTranslationResult(request: request, outcome: .success(translations))
+            guard pdfTranslationRequest == request else { return }
+            _ = try await request.context.service.translate(request.page.paragraphs.map(\.text)) { index, translation in
+                guard !Task.isCancelled, self.pdfTranslationRequest == request else { return }
+                self.pdfTranslationResult?.translations[request.page.paragraphs[index].id] = translation
+            }
+            guard !Task.isCancelled, pdfTranslationRequest == request else { return }
+            pdfTranslationResult?.status = .ready
         } catch {
-            guard !Task.isCancelled else { return }
-            pdfTranslationResult = PDFTranslationResult(request: request, outcome: .failure(ReaderTranslationProblem(error)))
+            guard !Task.isCancelled, pdfTranslationRequest == request else { return }
+            pdfTranslationResult?.status = .failed(ReaderTranslationProblem(error))
         }
     }
 
@@ -409,7 +412,7 @@ struct ReaderView: View {
                 if showsPDFTranslation {
                     ReaderPDFTranslationPane(
                         page: visiblePDFTranslationPage,
-                        translations: (try? currentPDFTranslation?.get()) ?? [],
+                        translations: currentPDFTranslation?.translations ?? [:],
                         status: translationStatus,
                         reveal: { pdfTranslationReveal = $0 },
                         retry: retryTranslation

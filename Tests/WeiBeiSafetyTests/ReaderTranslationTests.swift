@@ -27,6 +27,37 @@ final class ReaderTranslationTests: XCTestCase {
         XCTAssertEqual(result, ["第一段", "引文"])
     }
 
+    @MainActor
+    func testCompleteParagraphIsDeliveredWhileTheRestOfTheStreamIsPending() async throws {
+        let (chunks, continuation) = AsyncThrowingStream<NativeStreamChunk, Error>.makeStream()
+        let first = expectation(description: "A paragraph is delivered before the final chunk")
+        var delivered: [Int: String] = [:]
+        let task = Task {
+            try await service.translateBatch(["First paragraph", "Second paragraph"],
+                                            adapter: TranslationStream(chunks: chunks)) { index, translation in
+                delivered[index] = translation
+                if index == 1 { first.fulfill() }
+            }
+        }
+        defer {
+            continuation.finish()
+            task.cancel()
+        }
+
+        continuation.yield(.textDelta(index: 0, text: "```json\r\n{\"1\":\"引文 {\\"))
+        continuation.yield(.textDelta(index: 0, text: #""甲\"}, \u4"#))
+        continuation.yield(.textDelta(index: 0, text: #"e59","#))
+        await fulfillment(of: [first], timeout: 5)
+        XCTAssertEqual(delivered, [1: #"引文 {"甲"}, 乙"#])
+
+        continuation.yield(.textDelta(index: 0, text: #""0":"第一段"}"# + "\r\n```"))
+        continuation.yield(.finish(reason: .stop, replayState: nil))
+        continuation.finish()
+        let result = try await task.value
+        XCTAssertEqual(result, ["第一段", #"引文 {"甲"}, 乙"#])
+        XCTAssertEqual(delivered, [0: result[0], 1: result[1]])
+    }
+
     func testIncompleteResultsNeverAttachToAnotherPassage() async throws {
         let originals = ["First paragraph", "Second paragraph"]
         for response in [#"{"0":"第一段"}"#, #"{"0":"第一段","2":"第二段"}"#, #"{"0":"第一段","1":" "}"#] {
@@ -36,6 +67,23 @@ final class ReaderTranslationTests: XCTestCase {
             } catch let failure as ReaderTranslationService.Failure {
                 XCTAssertEqual(failure, .invalidTranslation)
             }
+        }
+    }
+
+    @MainActor
+    func testMalformedRemainderDoesNotDiscardAPrecedingCompleteParagraph() async throws {
+        for response in [#"{"0":"第一段","1":" "}"#, #"{"0":"第一段","0":"重复"}"#] {
+            var delivered: [Int: String] = [:]
+            do {
+                _ = try await service.translateBatch(["First paragraph", "Second paragraph"],
+                                                     adapter: TranslationStream(text: response)) { index, translation in
+                    delivered[index] = translation
+                }
+                XCTFail("The malformed batch was accepted")
+            } catch let failure as ReaderTranslationService.Failure {
+                XCTAssertEqual(failure, .invalidTranslation)
+            }
+            XCTAssertEqual(delivered, [0: "第一段"])
         }
     }
 
@@ -76,17 +124,25 @@ final class ReaderTranslationTests: XCTestCase {
 
     private struct TranslationStream: NativeLLMAdapter {
         let family = "reader-translation-test"
-        let text: String
-        var reason: NativeFinishReason = .stop
+        let chunks: AsyncThrowingStream<NativeStreamChunk, Error>
         var inspect: @Sendable (NativeLLMRequest) -> Void = { _ in }
 
-        func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
-            inspect(request)
-            return AsyncThrowingStream { continuation in
+        init(chunks: AsyncThrowingStream<NativeStreamChunk, Error>) {
+            self.chunks = chunks
+        }
+
+        init(text: String, reason: NativeFinishReason = .stop, inspect: @escaping @Sendable (NativeLLMRequest) -> Void = { _ in }) {
+            self.inspect = inspect
+            chunks = AsyncThrowingStream { continuation in
                 continuation.yield(.textDelta(index: 0, text: text))
                 continuation.yield(.finish(reason: reason, replayState: nil))
                 continuation.finish()
             }
+        }
+
+        func stream(_ request: NativeLLMRequest) -> AsyncThrowingStream<NativeStreamChunk, Error> {
+            inspect(request)
+            return chunks
         }
     }
 

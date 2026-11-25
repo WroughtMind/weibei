@@ -72,17 +72,19 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
         }
         guard next != viewport else { return }
         viewport = next
-        if task != nil, Set(next).isDisjoint(with: requested) {
-            task?.cancel()
-            task = nil
-            requested = []
-        }
         translateVisibleParagraphs(in: view)
     }
 
     private func translateVisibleParagraphs(in view: WKWebView) {
-        guard task == nil, let context, let token, let viewport else { return }
+        guard let context, let token, let viewport else { return }
         let missing = viewport.filter { rendered[$0.id] != $0.text }
+        if let task {
+            let relevant = missing.isEmpty ? viewport : missing
+            guard Set(relevant).isDisjoint(with: requested) else { return }
+            task.cancel()
+            self.task = nil
+            requested = []
+        }
         guard !missing.isEmpty else {
             publish(viewport.isEmpty ? .noText : .ready)
             return
@@ -91,24 +93,14 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
         requested = missing
         task = Task { [weak self, weak view] in
             do {
-                let results = try await context.service.translate(missing.map(\.text))
+                _ = try await context.service.translate(missing.map(\.text)) { [weak self, weak view] index, translation in
+                    guard let self, let view else { return }
+                    await self.render(translation, for: missing[index], token: token, in: view)
+                }
                 guard let self, let view, self.token == token, !Task.isCancelled else { return }
-                let updates: [[String: Any]] = zip(missing, results).map { paragraph, translation in
-                    return ["id": paragraph.id, "source": paragraph.text, "translation": translation]
-                }
-                let appliedIDs = try await view.callAsyncJavaScript(
-                    "return globalThis.weiBeiReaderTranslation?.render(token, updates) ?? [];",
-                    arguments: ["token": token, "updates": updates],
-                    in: nil, contentWorld: Self.world
-                )
-                guard self.token == token, !Task.isCancelled else { return }
-                let applied = Set(appliedIDs as? [Int] ?? [])
-                for paragraph in missing where applied.contains(paragraph.id) {
-                    self.rendered[paragraph.id] = paragraph.text
-                }
                 self.task = nil
                 self.requested = []
-                if applied.count != missing.count, self.viewport == viewport {
+                if self.viewport == viewport, missing.contains(where: { self.rendered[$0.id] != $0.text }) {
                     self.publish(.failed(.failed))
                 } else {
                     self.translateVisibleParagraphs(in: view)
@@ -124,6 +116,19 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
                 }
             }
         }
+    }
+
+    private func render(_ translation: String, for paragraph: Paragraph, token: String, in view: WKWebView) async {
+        guard self.token == token, !Task.isCancelled else { return }
+        let update: [String: Any] = ["id": paragraph.id, "source": paragraph.text, "translation": translation]
+        let appliedIDs = try? await view.callAsyncJavaScript(
+            "return globalThis.weiBeiReaderTranslation?.render(token, updates) ?? [];",
+            arguments: ["token": token, "updates": [update]],
+            in: nil, contentWorld: Self.world
+        )
+        guard self.token == token, !Task.isCancelled, (appliedIDs as? [Int]) == [paragraph.id] else { return }
+        rendered[paragraph.id] = paragraph.text
+        translateVisibleParagraphs(in: view)
     }
 
     private func publish(_ status: ReaderTranslationStatus) {
