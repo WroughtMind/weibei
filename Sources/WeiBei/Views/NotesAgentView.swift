@@ -2728,13 +2728,14 @@ struct FloatingSelectionAgentView: View {
                let record = store.selectionRemarkRecords.first(where: { $0.id == interaction.selectionContext?.id }) {
                 ExcerptRemarkPopover(record: record, close: closeFloatingAgent)
                     .id(record.id)
+                    .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
             } else if showsExpandedBody {
                 expandedBody
+                    .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
             } else {
                 promptBody
             }
         }
-        .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
 #if targetEnvironment(macCatalyst)
         .background {
             ConversationSelectionPanelProbe(position: placedOrigin)
@@ -2825,6 +2826,7 @@ struct FloatingSelectionAgentView: View {
         Group {
             if showsNoteFormattingToolbar {
                 noteFormattingToolbar
+                    .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
             } else {
                 defaultPromptBody
             }
@@ -2836,36 +2838,41 @@ struct FloatingSelectionAgentView: View {
             Button {
                 openExpandedComposer()
             } label: {
-                Text(store.ui("问", "Ask")).frame(minWidth: 28)
+                Text(store.ui("问", "Ask"))
             }
-            .foregroundStyle(WeiBeiTheme.link)
             .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
             .help(store.ui("就这段提问", "Ask about this passage"))
 
             if store.canOpenSelectedSourceReference {
-                promptSeparator
                 Button(store.ui("来源", "Source")) {
                     openSourceReference()
                 }
             }
 
             if store.selectionContext != nil {
-                promptSeparator
                 Button {
                     openRemarkComposer()
                 } label: {
-                    Text(store.ui("记", "Remark")).frame(minWidth: 28)
+                    Text(store.ui("记", "Remark"))
                 }
-                .foregroundStyle(WeiBeiTheme.link)
                 .accessibilityLabel(Text(store.ui("记下这段", "Remark on this passage")))
                 .help(store.ui("记下这段（留空只存原文）", "Remark on this passage (empty saves the passage)"))
             }
+
+            if let selection = store.selectionContext, selection.source == .document {
+                ReaderSelectionTranslationButton(selection: selection)
+            }
         }
-        .weiBeiText(13, weight: .medium)
-        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 13, height: 32))
-        .padding(.horizontal, 4)
-        .frame(height: 34)
+        .buttonStyle(SelectionPromptSegmentStyle())
         .fixedSize()
+        .background(WeiBeiTheme.paperRaised, in: Capsule())
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .strokeBorder(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: WeiBeiTheme.ink.opacity(0.10), radius: 5, y: 2)
     }
 
     private var showsNoteFormattingToolbar: Bool {
@@ -3550,6 +3557,24 @@ struct FloatingSelectionAgentView: View {
         withTransaction(transaction) {
             placedOrigin = parked
         }
+    }
+}
+
+private struct SelectionPromptSegmentStyle: ButtonStyle {
+    @Environment(\.weiBeiTextScale) private var textScale
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let highlight = configuration.isPressed ? 0.16 : hovering ? 0.08 : 0
+        configuration.label
+            .weiBeiText(13, weight: .medium)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .padding(.horizontal, 12)
+            .frame(minWidth: 42)
+            .frame(height: 28 * max(1, textScale))
+            .background(WeiBeiTheme.ink.opacity(highlight))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
     }
 }
 
