@@ -50,6 +50,75 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
+    func testReaderTabsPersistAcrossReloadAndMigrateItemIDs() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let a = StudyItem(id: "mat-a", title: "Alpha", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let b = StudyItem(id: "mat-b", title: "Beta", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        let c = StudyItem(id: "mat-c", title: "Gamma", subtitle: "", kind: .text, urlPath: nil, isSample: false)
+
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.importedItems = [a, b, c]
+        store.openContextualItem(a.id, kind: .material)
+        store.openContextualItem(b.id, kind: .material)
+        store.openContextualItem(c.id, kind: .material)
+        store.closeReaderTab(b.id)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [a.id, c.id])
+
+        let renamedA = StudyItem(id: "mat-a-renamed", title: "Alpha", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [renamedA, b, c]
+        store.replaceItemIDEverywhere(a.id, with: renamedA.id)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [renamedA.id, c.id])
+
+        let reloaded = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: false, startsCourseFileMaintenance: false)
+        XCTAssertEqual(reloaded.readerTabMaterials.map(\.id), [renamedA.id, c.id])
+        XCTAssertEqual(reloaded.selectedMaterialItem?.id, c.id)
+    }
+
+    @MainActor
+    func testReaderTabsIsolateByActiveCourseAndFormatProgress() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let courseA = Course(title: "Algebra")
+        let courseB = Course(title: "Topology")
+        let a1 = StudyItem(
+            id: "a1", title: "Spectral", subtitle: "", kind: .pdf, urlPath: nil, isSample: false,
+            storage: .courseOwned(ownerCourseID: courseA.id, relativePath: "Materials/Spectral.pdf")
+        )
+        let a2 = StudyItem(
+            id: "a2", title: "SVD", subtitle: "", kind: .markdown, urlPath: nil, isSample: false,
+            storage: .courseOwned(ownerCourseID: courseA.id, relativePath: "Materials/SVD.md")
+        )
+        let b1 = StudyItem(
+            id: "b1", title: "Covering", subtitle: "", kind: .pdf, urlPath: nil, isSample: false,
+            storage: .courseOwned(ownerCourseID: courseB.id, relativePath: "Materials/Covering.pdf")
+        )
+
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.courses = [courseA, courseB]
+        store.importedItems = [a1, a2, b1]
+
+        store.activeCourseID = courseA.id
+        store.openContextualItem(a1.id, kind: .material)
+        store.updateReaderPageIndex(4)
+        store.openContextualItem(a2.id, kind: .material)
+        store.updateReaderHTMLLocation(id: "sec-2", title: "Eckart–Young，章节标识：sec-2", reason: "scroll")
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [a1.id, a2.id])
+
+        store.activeCourseID = courseB.id
+        store.openContextualItem(b1.id, kind: .material)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [b1.id])
+
+        store.activeCourseID = courseA.id
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [a1.id, a2.id])
+        XCTAssertEqual(store.readerTabProgressSummary(for: a1), store.ui("第 5 页", "Page 5"))
+        XCTAssertEqual(store.readerTabProgressSummary(for: a2), "Eckart–Young")
+    }
+
+    @MainActor
     func testMarkdownReadingLocationReachesQuestionAndRestoresAfterReselect() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

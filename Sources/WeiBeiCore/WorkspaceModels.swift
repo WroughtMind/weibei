@@ -2141,6 +2141,7 @@ public struct PersistedWorkspace: Codable, Sendable {
     public var pendingNoteWritesByItemID: [String: PendingNoteWriteState]?
     public var noteBackingContentDigestsByItemID: [String: String]?
     public var selectedItemID: String?
+    public var readerTabIDs: [String]?
     public var activeNotebookItemID: String?
     public var courses: [Course]?
     public var courseItemMemberships: [CourseItemMembership]?
@@ -2188,6 +2189,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil,
         noteBackingContentDigestsByItemID: [String: String]? = nil,
         selectedItemID: String? = nil,
+        readerTabIDs: [String]? = nil,
         activeNotebookItemID: String? = nil,
         courses: [Course]? = nil,
         courseItemMemberships: [CourseItemMembership]? = nil,
@@ -2233,6 +2235,7 @@ public struct PersistedWorkspace: Codable, Sendable {
         self.pendingNoteWritesByItemID = pendingNoteWritesByItemID
         self.noteBackingContentDigestsByItemID = noteBackingContentDigestsByItemID
         self.selectedItemID = selectedItemID
+        self.readerTabIDs = readerTabIDs
         self.activeNotebookItemID = activeNotebookItemID
         self.courses = courses
         self.courseItemMemberships = courseItemMemberships
