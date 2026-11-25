@@ -24,7 +24,8 @@ final class NotePDFRendererTests: XCTestCase {
         let document = try XCTUnwrap(PDFDocument(data: data))
         let page = try XCTUnwrap(document.page(at: 0))
         let text = try XCTUnwrap(page.string)
-        XCTAssertTrue(text.contains("DiagramReady"), text)
+        // The source block also prints this label. A second occurrence is the diagram.
+        XCTAssertEqual(text.components(separatedBy: "DiagramReady").count, 3, text)
         XCTAssertFalse(text.contains("Rendering Mermaid diagram"), text)
     }
 

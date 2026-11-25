@@ -361,8 +361,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let saved = await store.flushPendingWorkspaceSaveAsync()
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
 
-            let snapshotMissing = !captured && (store.noteEditingSession.dirty
-                || store.blankNoteDraftMaterialID != nil)
+            let session = store.noteEditingSession
+            let snapshot = store.latestNoteEditorSnapshot
+            let snapshotMissing = (session.dirty && (!captured || snapshot?.documentID != session.documentID
+                || snapshot?.revision != session.currentRevision))
+                || (!captured && store.blankNoteDraftMaterialID != nil)
             let approvedRestart = Self.updates.status == .installing && store.allowsUnsavedRelaunch
             // On Catalyst, UIKit enters the background on Quit. A window's
             // inactive scene phase can also happen during ordinary interaction.
