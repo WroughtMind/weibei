@@ -30,6 +30,8 @@ classify_path() {
   # SwiftPM host targets live in Sources/ and Tests/. Native App sources and
   # Xcode settings are checked by Catalyst, not by an unrelated host rebuild.
   case "$path" in
+    Sources/WeiBei/WebEditor/test/*|Sources/WeiBeiWebEditorCheck/*)
+      ;; # The separate editor scope below owns these test targets.
     Sources/*|Tests/*|Package.swift|Package.resolved|package.json|package-lock.json|Config/*|script/run_self_check.py)
       code=true ;;
   esac
@@ -120,6 +122,7 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes "release" "script/verify_update_installation.py"
   expect_scopes "code agent editor data_safety acceptance" "Sources/WeiBei/Stores/WorkspaceStore.swift"
   expect_scopes "code editor acceptance" "Sources/WeiBei/WebEditor/src/editor.ts" "Sources/WeiBeiCore/MarkdownAttachmentStore.swift"
+  expect_scopes "editor acceptance" "Sources/WeiBei/WebEditor/test/editor.test.ts" "Sources/WeiBeiWebEditorCheck/main.swift"
   expect_scopes "editor acceptance" "tsconfig.editor.json" "script/build_editor.mjs"
   expect_scopes "code data_safety acceptance" "Tests/WeiBeiSafetyTests/CourseProjectRootSelfCheck.swift"
   expect_scopes "code data_safety acceptance" "Sources/WeiBei/Views/SidebarView.swift" "Sources/WeiBei/Views/CourseDrawerHost.swift"
@@ -157,6 +160,6 @@ while IFS= read -r -d '' path; do
     continue
   fi
   classify_path "$path"
-done < <(git diff --name-only -z "$1" "$2")
+done < <(git diff --no-renames --name-only -z "$1" "$2")
 
 emit_scopes

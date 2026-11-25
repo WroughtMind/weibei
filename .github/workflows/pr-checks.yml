@@ -45,6 +45,9 @@ jobs:
     name: 判断改动范围
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       build_number: ${{ steps.scope.outputs.build_number }}
       code: ${{ steps.scope.outputs.code }}
@@ -55,6 +58,8 @@ jobs:
       data_safety: ${{ steps.scope.outputs.data_safety }}
       tools: ${{ steps.scope.outputs.tools }}
       website: ${{ steps.scope.outputs.website }}
+      native_input_key: ${{ steps.native.outputs.key }}
+      native_reuse_run: ${{ steps.native.outputs.reused_run }}
 
     steps:
       - name: 取出完整源码历史
@@ -86,8 +91,20 @@ jobs:
           python3 -m compileall -q script
           python3 script/check_ci_routing.py
           python3 script/check_build_number.py
+          python3 script/test_ci_native_reuse.py
           python3 -m unittest discover -s script -p 'test_release_flow.py' -v
           for file in script/*.sh DesignSystem/scripts/*.sh; do bash -n "$file"; done
+
+      - name: 核对上轮双架构结果
+        id: native
+        if: >-
+          github.event_name == 'pull_request' && (steps.scope.outputs.code == 'true' ||
+          steps.scope.outputs.editor == 'true' || steps.scope.outputs.release == 'true' || steps.scope.outputs.acceptance == 'true')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_ACCEPTANCE: ${{ steps.scope.outputs.acceptance }}
+          NATIVE_RELEASE: ${{ steps.scope.outputs.release }}
+        run: python3 script/ci_native_reuse.py
 
   website-check:
     name: 官网检查
@@ -123,7 +140,7 @@ jobs:
   app-check:
     name: 应用编译与相关自检
     needs: scope
-    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.agent == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.data_safety == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.agent == 'true' || needs.scope.outputs.data_safety == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -156,26 +173,6 @@ jobs:
         run: |
           swift run WeiBeiDev nslog-scan
 
-      - name: 安装 Node 依赖
-        id: dependencies
-        if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: npm ci
-
-      - name: 运行编辑器自检
-        id: editor
-        if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
-          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
-          "$RUNNER_TEMP/weibei-editor-fonts/bin/python" script/convert_editor_fonts.py --check
-          npm run typecheck:genui
-          npm run build:genui
-          npm run typecheck:editor
-          npm run test:editor
-          npm run build:editor
-          git diff --exit-code -- Sources/WeiBei/Resources/Editor
-          swift run WeiBeiWebEditorCheck
-
       - name: 运行课程目录、数据与 Agent 安全自检
         id: safety
         if: (needs.scope.outputs.data_safety == 'true' || needs.scope.outputs.agent == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
@@ -198,13 +195,51 @@ jobs:
           git diff --exit-code
           test -z "$(git status --porcelain=v1)"
 
+  editor-check:
+    name: 编辑器自检
+    needs: scope
+    if: needs.scope.outputs.editor == 'true' || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: 取出源码
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: 安装 Node 依赖
+        id: dependencies
+        run: npm ci
+
+      - name: 运行编辑器自检
+        id: editor
+        run: |
+          python3 -m venv "$RUNNER_TEMP/weibei-editor-fonts"
+          "$RUNNER_TEMP/weibei-editor-fonts/bin/pip" install -r script/editor-font-requirements.txt
+          "$RUNNER_TEMP/weibei-editor-fonts/bin/python" script/convert_editor_fonts.py --check
+          npm run typecheck:genui
+          npm run build:genui
+          npm run typecheck:editor
+          npm run test:editor
+          npm run build:editor
+          git diff --exit-code -- Sources/WeiBei/Resources/Editor
+          swift run WeiBeiWebEditorCheck
+
+      - name: 检查空白与生成文件
+        id: cleanliness
+        run: |
+          git diff --check
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1)"
+
   catalyst-check:
     env:
       WEIBEI_BUILD_NUMBER: ${{ needs.scope.outputs.build_number }}
       WEIBEI_TARGET_ARCH: ${{ matrix.arch }}
     name: Catalyst ${{ matrix.arch }} 构建、会话与安装包
     needs: scope
-    if: github.event_name == 'workflow_dispatch' || needs.scope.outputs.code == 'true' || needs.scope.outputs.editor == 'true' || needs.scope.outputs.release == 'true' || needs.scope.outputs.acceptance == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' || (needs.scope.outputs.native_reuse_run == '' &&
+      (needs.scope.outputs.code == 'true' || needs.scope.outputs.editor == 'true' ||
+      needs.scope.outputs.release == 'true' || needs.scope.outputs.acceptance == 'true'))
     strategy:
       fail-fast: false
       matrix:
@@ -221,8 +256,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 验证当前架构工具链
+      - name: 验证当前架构工具链与源码 ${{ needs.scope.outputs.native_input_key }}
+        id: input_stamp
         run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(uname -m)" = "$WEIBEI_TARGET_ARCH"
           xcodebuild -version
 
@@ -414,7 +451,7 @@ jobs:
   fast-check:
     # 手动局部检查不能以同名结果覆盖 PR 的必需合并检查。
     name: ${{ github.event_name == 'pull_request' && '快速编译与核心自检' || '手动检查汇总' }}
-    needs: [scope, website-check, tools-check, app-check, catalyst-check]
+    needs: [scope, website-check, tools-check, app-check, editor-check, catalyst-check]
     if: always() && (github.event_name != 'workflow_dispatch' || inputs.diagnostic_scenario == '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -433,11 +470,13 @@ jobs:
           manual = os.environ['EVENT_NAME'] == 'workflow_dispatch'
           full = manual and os.environ['FULL_SUITE'] == 'true'
           enabled = lambda key: scopes[key] == 'true'
+          reused_native = os.environ['EVENT_NAME'] == 'pull_request' and scopes.get('native_reuse_run', '').isdigit()
           required = {
               'website-check': enabled('website') or full,
               'tools-check': enabled('tools') or full,
-              'app-check': manual or any(enabled(k) for k in ('code', 'agent', 'editor', 'data_safety')),
-              'catalyst-check': manual or enabled('code') or enabled('editor') or enabled('release') or enabled('acceptance'),
+              'app-check': manual or any(enabled(k) for k in ('code', 'agent', 'data_safety')),
+              'editor-check': enabled('editor') or full,
+              'catalyst-check': manual or (not reused_native and any(enabled(k) for k in ('code', 'editor', 'release', 'acceptance'))),
           }
           for name, needed in required.items():
               allowed = ('success',) if needed else ('success', 'skipped')
