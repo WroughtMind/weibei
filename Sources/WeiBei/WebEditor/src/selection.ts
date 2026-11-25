@@ -16,7 +16,7 @@ export const selectionEndpointRect = (selection: Selection | null) => {
     x: prefersAbove ? rect.left : rect.right,
     y: prefersAbove ? rect.top : rect.bottom,
     width: rect.width,
-    height: rect.height,
+    height: range.getBoundingClientRect().height,
     prefersAbove,
   };
 };
