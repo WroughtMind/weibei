@@ -160,6 +160,10 @@ private struct ReaderTranslationOptions: View {
     private var preferences = ReaderTranslationPreferences()
     var manageConnections: () -> Void
 
+    init(manageConnections: @escaping () -> Void) {
+        self.manageConnections = manageConnections
+    }
+
     var body: some View {
         Picker(store.ui("译为", "Translate to"), selection: preferences.language) {
             Text(store.ui("跟随界面语言", "Interface language")).tag("")
@@ -220,6 +224,10 @@ struct ReaderSelectionTranslationButton: View {
     @State private var presented = false
     @State private var attempt = UUID()
     @State private var result: Result<String, ReaderTranslationProblem>?
+
+    init(selection: SelectionContext) {
+        self.selection = selection
+    }
 
     var body: some View {
         Button {

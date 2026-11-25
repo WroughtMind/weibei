@@ -280,6 +280,16 @@ struct ReaderView: View {
     /// Live pane size from a background probe. Zero until first real measurement.
     @State private var measuredPaneSize: CGSize = .zero
 
+    init(
+        isImmersive: Bool = false,
+        showsFloatingTitle: Bool = false,
+        floatingTitleReorderRole: WorkspacePaneRole? = nil
+    ) {
+        self.isImmersive = isImmersive
+        self.showsFloatingTitle = showsFloatingTitle
+        self.floatingTitleReorderRole = floatingTitleReorderRole
+    }
+
     private var supportsBilingualReading: Bool {
         guard let item = store.selectedMaterialItem, item.url != nil else { return false }
         return (item.kind == .pdf && !pdfDocumentUnreadable) || item.kind == .html || item.kind == .markdown
