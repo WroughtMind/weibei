@@ -7,6 +7,49 @@ import WeiBeiCore
 
 final class SelectionExperienceTests: XCTestCase {
     @MainActor
+    func testReaderTabsSwitchAndCloseWithReadingProgress() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let pdf = StudyItem(id: "paper", title: "Paper", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let markdown = StudyItem(id: "outline", title: "Outline", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        let extra = StudyItem(id: "example", title: "Example", subtitle: "", kind: .text, urlPath: nil, isSample: false)
+        store.importedItems = [pdf, markdown, extra]
+
+        store.openContextualItem(pdf.id, kind: .material)
+        store.updateReaderPageIndex(6)
+        store.openContextualItem(markdown.id, kind: .material)
+        store.updateReaderHTMLLocation(id: "markdown-heading-3", title: "Results", reason: "scroll")
+        store.select(itemID: extra.id)
+        store.showContextualBrowser(.material)
+        store.selectReaderTab(pdf.id)
+
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [pdf.id, markdown.id, extra.id])
+        XCTAssertEqual(store.selectedMaterialItem?.id, pdf.id)
+        XCTAssertEqual(store.readerTargetPageIndex, 6)
+        XCTAssertFalse(store.materialPickerPresented)
+
+        store.closeReaderTab(extra.id)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [pdf.id, markdown.id])
+        XCTAssertEqual(store.selectedMaterialItem?.id, pdf.id)
+        store.closeReaderTab(pdf.id)
+        XCTAssertEqual(store.selectedMaterialItem?.id, markdown.id)
+        XCTAssertEqual(store.readerTargetLocationID, "markdown-heading-3")
+
+        store.openContextualItem(pdf.id, kind: .material)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [markdown.id, pdf.id])
+        XCTAssertEqual(store.readerTargetPageIndex, 6)
+        store.closeReaderTab(pdf.id)
+        XCTAssertEqual(store.selectedMaterialItem?.id, markdown.id)
+
+        store.closeReaderTab(markdown.id)
+        XCTAssertTrue(store.readerTabMaterials.isEmpty)
+        XCTAssertNil(store.selectedMaterialItem)
+        XCTAssertTrue(store.showReader)
+        XCTAssertEqual(store.courseMaterials, [pdf, markdown, extra])
+    }
+
+    @MainActor
     func testMarkdownReadingLocationReachesQuestionAndRestoresAfterReselect() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
