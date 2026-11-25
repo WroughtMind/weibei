@@ -58,9 +58,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationBuildKey)
             defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationVersionKey)
         }
-        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveWorkspace() }
-        })
+        for notification in [UIApplication.willResignActiveNotification,
+                             UIApplication.didEnterBackgroundNotification] {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(
+                forName: notification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.saveWorkspace() }
+            })
+        }
         return true
     }
 
@@ -330,6 +335,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func saveWorkspace() {
         guard !Self.usesFixture else { return }
         guard saveTask == nil else { return }
+        finishBackgroundSave()
         let attemptID = UUID()
         saveAttemptID = attemptID
         Self.workspace.commitCurrentReaderLocation()
@@ -347,21 +353,45 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         saveTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { finishBackgroundSave(attemptID: attemptID) }
             let store = Self.workspace
-            _ = await store.freshActiveNoteEditorSnapshot()
+            let captured = await store.freshActiveNoteEditorSnapshot()
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
-            _ = await store.flushPendingWorkspaceSaveAsync()
+            let saved = await store.flushPendingWorkspaceSaveAsync()
+            guard !Task.isCancelled, saveAttemptID == attemptID else { return }
+
+            let snapshotMissing = !captured && (store.noteEditingSession.dirty
+                || store.blankNoteDraftMaterialID != nil)
+            let approvedRestart = Self.updates.status == .installing && store.allowsUnsavedRelaunch
+            // On Catalyst, UIKit enters the background on Quit. A window's
+            // inactive scene phase can also happen during ordinary interaction.
+            if UIApplication.shared.applicationState == .background,
+               (snapshotMissing || !saved), !approvedRestart {
+                if snapshotMissing {
+                    store.showImportantOperationError(store.ui(
+                        "笔记最新内容尚未安全保存，请保持窗口打开并重试。",
+                        "The latest note is not safely saved. Keep the window open and retry."
+                    ))
+                }
+                saveTask = nil
+                UIApplication.shared.requestSceneSessionActivation(UIApplication.shared.openSessions.first,
+                                                                  userActivity: nil, options: nil) { error in
+                    WeiBeiLog.noteRepair.error("code=catalyst_save_reopen_failed reason=\(error.localizedDescription, privacy: .private)")
+                }
+                // Keep the task assertion until the window is active again.
+                return
+            }
+            finishBackgroundSave(attemptID: attemptID)
         }
     }
 
     func sceneBecameActive() {
+        if saveTask == nil { finishBackgroundSave() }
         Task { await Self.workspace.reconcileActiveNoteEditorWithBackingFile() }
     }
-    private func finishBackgroundSave(attemptID: UUID) {
-        guard saveAttemptID == attemptID else { return }
+    private func finishBackgroundSave(attemptID: UUID? = nil) {
+        if let attemptID, saveAttemptID != attemptID { return }
         saveTask = nil
         saveAttemptID = nil
         if backgroundTask != .invalid {

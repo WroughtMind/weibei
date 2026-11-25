@@ -68,13 +68,15 @@ enum PDFReaderOpenSafety {
         }
         guard let first = lines.first, let last = lines.last,
               let start = SelectionAnchorContentPoint.fromLocalPoint(
-                CGPoint(x: first.minX, y: view.isFlipped ? first.minY : first.maxY), in: view),
-              let end = SelectionAnchorContentPoint.fromLocalPoint(
-                CGPoint(x: last.maxX, y: view.isFlipped ? last.maxY : last.minY), in: view) else { return nil }
+                CGPoint(x: first.minX, y: view.isFlipped ? first.minY : first.maxY), in: view, selectionHeight: first.height),
+              var end = SelectionAnchorContentPoint.fromLocalPoint(
+                CGPoint(x: last.maxX, y: view.isFlipped ? last.maxY : last.minY), in: view, selectionHeight: last.height) else { return nil }
+        end.selectionHeight = max(first.height, last.height, end.y - start.y)
         guard let pointer = fallbackLocalPoint.flatMap({ SelectionAnchorContentPoint.fromLocalPoint($0, in: view) }) else { return end }
         let distanceToStart = hypot(pointer.x - start.x, pointer.y - start.y)
         let distanceToEnd = hypot(pointer.x - end.x, pointer.y - end.y)
         let above = distanceToStart < distanceToEnd
-        return SelectionPopoverAnchor(x: pointer.x, y: above ? start.y : end.y, prefersAbove: above)
+        return SelectionPopoverAnchor(x: pointer.x, y: above ? start.y : end.y,
+                                      prefersAbove: above, selectionHeight: end.selectionHeight)
     }
 }

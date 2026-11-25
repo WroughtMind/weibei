@@ -1340,6 +1340,15 @@ let reverseSelectionPoint = SelectionFloatingAgentPlacement.position(
     prefersAnchorCenter: true
 )
 expect(reverseSelectionPoint.y + 22 < 400, "backward selection opens above its final line")
+let bottomSelectionPoint = SelectionFloatingAgentPlacement.position(
+    anchor: FloatingAgentCoordinate(x: 320, y: 782),
+    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
+    surfaceHalfWidth: 63,
+    measuredHalfHeight: 14,
+    prefersAnchorCenter: true,
+    selectionHeight: 72
+)
+expect(bottomSelectionPoint.y + 14 < 710, "the capsule flips above all selected lines at the bottom edge")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)

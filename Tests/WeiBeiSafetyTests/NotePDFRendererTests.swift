@@ -4,6 +4,31 @@ import XCTest
 
 final class NotePDFRendererTests: XCTestCase {
     @MainActor
+    func testExportWaitsForColdMermaidRendering() async throws {
+        let source = NotePDFSource(
+            title: "Mermaid",
+            markdown: """
+                ```mermaid
+                sequenceDiagram
+                    participant Reader
+                    participant Editor
+                    Reader->>Editor: DiagramReady
+                ```
+                """,
+            baseURL: nil,
+            attachments: nil
+        )
+        let options = NotePDFOptions(theme: .paper, textScale: 1)
+
+        let data = try await NotePDFRenderer().render(source, options: options, language: .english)
+        let document = try XCTUnwrap(PDFDocument(data: data))
+        let page = try XCTUnwrap(document.page(at: 0))
+        let text = try XCTUnwrap(page.string)
+        XCTAssertTrue(text.contains("DiagramReady"), text)
+        XCTAssertFalse(text.contains("Rendering Mermaid diagram"), text)
+    }
+
+    @MainActor
     func testExportPreservesTableAndLongParagraphAcrossPhysicalPages() async throws {
         let rows = (0..<40).map { "| Row\($0)End | 跨页表格 |" }.joined(separator: "\n")
         let paragraph = (0..<30).map {

@@ -20,6 +20,7 @@ enum NativeHTTPByteStream {
                     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                         var body = ""
                         for try await line in bytes.lines {
+                            try Task.checkCancellation()
                             body += line
                             if body.count > 800 { break }
                         }
@@ -65,12 +66,17 @@ enum NativeHTTPByteStream {
             gate.fire()
             fetch.cancel()
         }
+        defer { watchdog.cancel() }
         do {
-            let value = try await fetch.value
-            watchdog.cancel()
+            let value = try await withTaskCancellationHandler {
+                try await fetch.value
+            } onCancel: {
+                fetch.cancel()
+            }
+            try Task.checkCancellation()
             return value
         } catch {
-            watchdog.cancel()
+            try Task.checkCancellation()
             if gate.fired {
                 throw NativeLLMFailure(code: "timeout", message: "connection timeout")
             }

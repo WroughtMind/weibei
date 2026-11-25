@@ -170,6 +170,7 @@ extension WorkspaceStore {
     }
 
     func prepareForUserRequestedRelaunch() async -> Bool {
+        allowsUnsavedRelaunch = false
         commitCurrentReaderLocation()
         let captured = await freshActiveNoteEditorSnapshot()
         await flushPendingNotePersistenceAsync(flushWorkspace: false)
@@ -177,7 +178,7 @@ extension WorkspaceStore {
         if captured, saved, !noteEditingSession.dirty,
            noteEditingSession.saveStatus != .failed,
            noteEditingSession.saveStatus != .externallyModified { return true }
-        return await userOperationRisks.confirm(
+        allowsUnsavedRelaunch = await userOperationRisks.confirm(
             title: ui("仍然安装并重启？", "Install and restart anyway?"),
             actionLabel: ui("安装并重启", "Install and Restart"),
             message: ui(
@@ -185,6 +186,7 @@ extension WorkspaceStore {
                 "Some note or workspace changes are not confirmed saved. Installing restarts WeiBei, and those unsaved changes may be lost. You can cancel, retry saving, then install."
             )
         )
+        return allowsUnsavedRelaunch
     }
 
     func noteEditorDidPersist(_ markdown: String, documentID: String) {
@@ -279,6 +281,7 @@ extension WorkspaceStore {
               item.editsBackingMarkdownFile,
               let url = item.url else { return }
         let generation = session.documentGeneration
+        let revision = session.currentRevision
         let savedRevision = session.savedRevision
         let disk = await Task.detached(priority: .utility) { () -> (String, String)? in
             guard let data = try? Data(contentsOf: url),
@@ -292,6 +295,7 @@ extension WorkspaceStore {
         )) ?? .damaged
         guard activeNoteEditorDocumentID == activeDocumentID,
               session.documentGeneration == generation,
+              session.currentRevision == revision,
               session.savedRevision == savedRevision,
               documentID == (session.dirty ? session.documentID : activeDocumentID),
               self.item(withID: documentID)?.url == url else { return }
