@@ -392,7 +392,7 @@ private struct ReaderMaterialTabs: ViewModifier {
     func body(content: Content) -> some View {
         let materials = store.readerTabMaterials
         let unfolded = materials.first { $0.id == hover.expandedID }
-        let showsControls = showsTitle && !store.materialPickerPresented && store.selectedMaterialItem != nil
+        let showsControls = showsTitle && store.selectedMaterialItem != nil
         let showsPanel = showsControls || unfolded != nil
         let transitionDuration = unfolded == nil ? WeiBeiMotionTokens.durationControl : WeiBeiMotionTokens.durationSmExit
 
@@ -991,7 +991,7 @@ struct ReaderView: View {
         .animation(WeiBeiMotion.feedback, value: pdfBrowseMode)
         .animation(WeiBeiMotion.visibility(pdfHasSelectableText != false), value: pdfHasSelectableText)
         .overlay(alignment: .top) {
-            if hasReaderPaperTabs || (canShowReaderTitle && store.selectedMaterialItem != nil && !store.materialPickerPresented) {
+            if hasReaderPaperTabs || (canShowReaderTitle && store.selectedMaterialItem != nil) {
                 let itemID = store.selectedMaterialItem?.id
                 let asked = store.markedSelectionAskThreads(forItemID: itemID)
                 let excerpt = itemID.flatMap { store.selectionRemarkRecords(forItemID: $0).first }
@@ -1167,7 +1167,8 @@ struct ReaderView: View {
     }
 
     private var canShowReaderTitle: Bool {
-        showsFloatingTitle && measuredPaneSize.width >= ReaderMaterialTabs.minimumPaneWidth(textScale: textScale)
+        showsFloatingTitle && !store.materialPickerPresented
+            && measuredPaneSize.width >= ReaderMaterialTabs.minimumPaneWidth(textScale: textScale)
     }
 
     private var hasReaderPaperTabs: Bool {
