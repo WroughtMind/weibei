@@ -249,6 +249,8 @@ final class AgentSessionDrafts {
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
+    /// Open for this workspace session, in the order the materials were opened.
+    @Published private var readerTabIDs: [String] = []
     @Published var selectedItemID: String? {
         willSet {
             if selectedItemID != newValue { commitCurrentReaderLocation() }
@@ -256,6 +258,10 @@ final class WorkspaceStore: ObservableObject {
         didSet {
             if materialPickerPresented { materialPickerPresented = false }
             if oldValue != selectedItemID { clearAutomaticSelectionAttachment() }
+            // A file move may update the selected ID before replacing its registration.
+            if let id = selectedItemID, !readerTabIDs.contains(id), selectedItem?.isCourseMaterial != false {
+                readerTabIDs.append(id)
+            }
         }
     }
     @Published var activeNotebookItemID: String? {
@@ -1338,6 +1344,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func removeItemRegistration(_ itemID: String) {
+        if let tabIndex = readerTabIDs.firstIndex(of: itemID) {
+            readerTabIDs.remove(at: tabIndex)
+        }
         fileMissingSinceByItemID.removeValue(forKey: itemID)
         pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
@@ -1762,6 +1771,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func resetPrimaryEntriesForLaunch() {
         selectedItemID = nil
+        readerTabIDs.removeAll()
         activeNotebookItemID = nil
         activeStudySessionID = nil
         activeCourseID = nil
@@ -2854,6 +2864,33 @@ final class WorkspaceStore: ObservableObject {
     var selectedMaterialItem: StudyItem? {
         guard let item = selectedItem, item.isCourseMaterial else { return nil }
         return item
+    }
+
+    var readerTabMaterials: [StudyItem] {
+        readerTabIDs.compactMap { id in
+            importedItems.first { $0.id == id && $0.isCourseMaterial }
+        }
+    }
+
+    func selectReaderTab(_ itemID: String?) {
+        if let itemID {
+            guard readerTabIDs.contains(itemID), item(withID: itemID)?.isCourseMaterial == true else { return }
+        }
+        if selectedItemID != itemID {
+            selectMeasured(itemID: itemID, opensNotebook: false)
+        }
+        if materialPickerPresented { materialPickerPresented = false }
+        focus(.reader)
+    }
+
+    func closeReaderTab(_ itemID: String) {
+        let tabs = readerTabMaterials
+        guard let index = tabs.firstIndex(where: { $0.id == itemID }) else { return }
+        readerTabIDs.removeAll { $0 == itemID }
+        guard selectedItemID == itemID else { return }
+
+        let nextID = tabs.dropFirst(index + 1).first?.id ?? tabs.prefix(index).last?.id
+        selectReaderTab(nextID)
     }
 
     var activeNoteItem: StudyItem? {

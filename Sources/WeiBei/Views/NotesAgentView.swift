@@ -138,6 +138,7 @@ struct PaneHeaderReorderModifier: ViewModifier {
     @State private var cursorPushed = false
 
     var role: WorkspacePaneRole?
+    var liftsContent = true
 
     func body(content: Content) -> some View {
         if let role {
@@ -157,8 +158,8 @@ struct PaneHeaderReorderModifier: ViewModifier {
                 }
                 .weiBeiFadeWhenReducingMotion(dragActive)
                 .contentShape(Rectangle())
-                .offset(y: !reduceMotion && (hovering || dragActive) ? -1 : 0)
-                .scaleEffect(reduceMotion ? 1 : (dragActive ? 1.01 : hovering ? 1.004 : 1), anchor: .top)
+                .offset(y: liftsContent && !reduceMotion && (hovering || dragActive) ? -1 : 0)
+                .scaleEffect(reduceMotion || !liftsContent ? 1 : (dragActive ? 1.01 : hovering ? 1.004 : 1), anchor: .top)
                 .textSelection(.disabled)
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 12, coordinateSpace: .global)
