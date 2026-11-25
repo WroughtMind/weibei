@@ -1248,6 +1248,15 @@ let reverseSelectionPoint = SelectionFloatingAgentPlacement.position(
     prefersAnchorCenter: true
 )
 expect(reverseSelectionPoint.y + 22 < 400, "backward selection opens above its final line")
+let bottomSelectionPoint = SelectionFloatingAgentPlacement.position(
+    anchor: FloatingAgentCoordinate(x: 320, y: 782),
+    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
+    surfaceHalfWidth: 63,
+    measuredHalfHeight: 14,
+    prefersAnchorCenter: true,
+    selectionHeight: 72
+)
+expect(bottomSelectionPoint.y + 14 < 710, "the capsule flips above all selected lines at the bottom edge")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
@@ -1555,7 +1564,7 @@ expect(malformedRichReply.text == "正文必须保留"
     && malformedRichReply.sources.isEmpty
     && malformedRichReply.actions.isEmpty
     && malformedRichReply.toolTrace.contains("reply-source:decode-failed")
-    && malformedRichReply.toolTrace.contains("reply-backend:decode-failed")
+    && !malformedRichReply.toolTrace.contains("reply-backend:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-state:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-sources:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-actions:decode-failed"), "broken reply attachments are dropped and diagnosed without swallowing the reply body")

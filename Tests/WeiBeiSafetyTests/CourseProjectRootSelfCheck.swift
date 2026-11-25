@@ -74,6 +74,7 @@ enum CourseProjectRootSelfCheck {
         try deniedSecurityScopeKeepsCourseUnavailable()
         try movedLibraryIntoWorkspaceIsRejectedOnRestore()
         try libraryCreationDerivesSafeNameAndRejectsConflicts()
+        try rootlessCourseKeepsCommonMaterialAssociation()
         try step("新建课程原子落盘") {
             try newCourseCreatesAtomicProjectAndManifest()
         }
@@ -7344,8 +7345,8 @@ enum CourseProjectRootSelfCheck {
     }
 
     @MainActor
-    private static func rootlessLegacyCourseIsOrganizedByCopy() throws {
-        let fixture = try Fixture(name: "rootless-course-organization")
+    private static func rootlessCourseKeepsCommonMaterialAssociation() throws {
+        let fixture = try Fixture(name: "rootless-course-membership")
         defer { fixture.remove() }
         let library = try fixture.makeDirectory("课程资料库")
         let sourceDirectory = try fixture.makeDirectory("旧资料")
@@ -7353,6 +7354,7 @@ enum CourseProjectRootSelfCheck {
         let original = Data("旧资料原件不能被移动".utf8)
         try original.write(to: sourceURL)
         var store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
         let item = try require(
             importFilesAndWait(
                 store,
@@ -7367,35 +7369,18 @@ enum CourseProjectRootSelfCheck {
         store.assignItemIDs([item.id], to: courseID)
 
         try store.configureCourseLibrary(at: library)
-        let courseRoot = try require(
-            store.courseRootURL(for: courseID),
-            "选择课程库后没有建立真实课程文件夹：\(store.transientNoteStatus ?? "没有记录整理错误")；\(store.workspaceSaveError ?? "没有记录保存错误")"
-        )
-        let organized = try require(
-            store.importedItems.first { $0.id == item.id },
-            "旧资料整理后改变或丢失了条目"
-        )
-        guard case .courseOwned(let ownerCourseID, _) = organized.storage else {
-            throw CheckError.failed("旧资料没有整理进真实课程目录")
-        }
-        let manifest = try CourseProjectManifest.read(
-            from: courseRoot.appendingPathComponent(".weibei/course.json")
-        )
-        try check(
-            ownerCourseID == courseID
-                && manifest.courseID == courseID
-                && organized.id == item.id
-                && (try Data(contentsOf: sourceURL)) == original
-                && (try Data(contentsOf: require(organized.url, "整理后没有资料路径"))) == original,
-            "旧课程整理没有保留课程身份、资料 ID 或外部原件"
-        )
+        try check(store.courseRootURL(for: courseID) == nil, "选择资料库后自动整理了旧课程")
+        try check(store.flushPendingWorkspaceSave(), "旧课程关联未能写入工作区")
 
         store = makeStore(fixture: fixture)
+        let reopened = try require(store.item(withID: item.id), "重启后没有找到旧资料")
+        let reopenedURL = try require(reopened.url, "重启后旧资料不可访问")
         try check(
-            store.courseRootURL(for: courseID) != nil
-                && store.importedItems.contains { $0.id == item.id }
-                && (try Data(contentsOf: sourceURL)) == original,
-            "重启后旧课程整理结果或外部原件丢失"
+            store.course(withID: courseID) != nil
+                && store.courseIDs(for: item.id) == [courseID]
+                && (try Data(contentsOf: sourceURL)) == original
+                && (try Data(contentsOf: reopenedURL)) == original,
+            "重启后旧课程关联或真实文件丢失"
         )
     }
 

@@ -83,7 +83,8 @@ struct ContentView: View {
                                     Color.clear.allowsHitTesting(false)
                                     GlobalFloatingSelectionLayer(
                                         expanded: $floatingAgentExpanded,
-                                        canvasSize: documentCanvas == .zero ? geometry.size : documentCanvas
+                                        canvasSize: documentCanvas == .zero ? geometry.size : documentCanvas,
+                                        fitsSidebar: fitsSidebar
                                     )
                                 }
                             }
@@ -413,10 +414,13 @@ private struct DocumentCanvasSizeKey: PreferenceKey {
 private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    @EnvironmentObject private var paneState: WorkspacePaneState
     @Environment(\.weiBeiTextScale) private var textScale
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Binding var expanded: Bool
     let canvasSize: CGSize
+    let fitsSidebar: Bool
     /// Top-left of the expanded panel. Nil until 「问」/「记」 opens; cleared when the float hides.
     @State private var placedOrigin: CGPoint? = nil
 
@@ -433,12 +437,11 @@ private struct GlobalFloatingSelectionLayer: View {
                     placedOrigin: $placedOrigin,
                     usesPlacedOrigin: usesPlacedOrigin,
                     initialOrigin: initialOrigin,
-                    anchor: interaction.selectionAnchor.map {
-                        FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y))
-                    },
+                    anchor: canvasAnchor,
                     canvasSize: canvasSize,
                     topInset: selectionTopInset,
-                    prefersAbove: interaction.selectionAnchor?.prefersAbove == true
+                    prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
+                    selectionHeight: Double(interaction.selectionAnchor?.selectionHeight ?? 18 * textScale)
                 ))
                 .transition(.opacity)
             }
@@ -474,9 +477,16 @@ private struct GlobalFloatingSelectionLayer: View {
         expanded || interaction.keepFloatingSelectionForAnswer
     }
 
+    private var canvasAnchor: FloatingAgentCoordinate? {
+        guard let anchor = interaction.selectionAnchor else { return nil }
+        let hasContent = paneState.showReader || paneState.showNotes || paneState.showAgent
+        let left = fitsSidebar && libraryDrawer.isOpen && hasContent ? WeiBeiMetric.courseDrawerWidth : 0
+        return FloatingAgentCoordinate(x: Double(anchor.x - left), y: Double(anchor.y))
+    }
+
     private var initialOrigin: CGPoint {
         let point = SelectionFloatingAgentPlacement.initialTopLeft(
-            anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
+            anchor: canvasAnchor,
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
             topInset: selectionTopInset,
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true
@@ -503,6 +513,7 @@ private struct FloatingSelectionPositionModifier: ViewModifier {
     let canvasSize: CGSize
     let topInset: Double
     let prefersAbove: Bool
+    let selectionHeight: Double
 
     func body(content: Content) -> some View {
         content.modifier(FloatingSelectionPositionEffect(
@@ -510,7 +521,8 @@ private struct FloatingSelectionPositionModifier: ViewModifier {
             anchor: anchor,
             canvasSize: canvasSize,
             topInset: topInset,
-            prefersAbove: prefersAbove
+            prefersAbove: prefersAbove,
+            selectionHeight: selectionHeight
         ))
     }
 }
@@ -522,6 +534,7 @@ private struct FloatingSelectionPositionEffect: GeometryEffect {
     let canvasSize: CGSize
     let topInset: Double
     let prefersAbove: Bool
+    let selectionHeight: Double
 
     func effectValue(size: CGSize) -> ProjectionTransform {
         let topLeft: CGPoint
@@ -535,7 +548,8 @@ private struct FloatingSelectionPositionEffect: GeometryEffect {
                 surfaceHalfWidth: Double(size.width / 2),
                 measuredHalfHeight: Double(size.height / 2),
                 prefersAbove: prefersAbove,
-                prefersAnchorCenter: true
+                prefersAnchorCenter: true,
+                selectionHeight: selectionHeight
             )
             topLeft = CGPoint(x: center.x - Double(size.width / 2), y: center.y - Double(size.height / 2))
         }
@@ -778,6 +792,8 @@ private struct LibraryAwareEscapeBridge: View {
                 })
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && interaction.readerSelectionTranslation != nil {
+                EscapeKeyBridge(onEscape: { interaction.readerSelectionTranslation = nil })
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showDocumentSearch {
                 EscapeKeyBridge(onEscape: onHideReaderSearch)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && !store.readerSourceHighlight.isEmpty {

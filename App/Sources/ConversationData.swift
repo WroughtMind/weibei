@@ -38,7 +38,7 @@ final class LabMessage {
 
 #if WEIBEI_ACCEPTANCE_CHECKS
 enum LabFixture {
-    static let landscapeSource = "data:image/png;base64," + ("""
+    private static let landscapeBase64 = ("""
         iVBORw0KGgoAAAANSUhEUgAAA8AAAAHgCAIAAADlh5PTAAASm0lEQVR4nO3WWbJk11XH4TMlBsAYeOCdiByBH3nDYDAYDAYn
         Npbkvm/GQFAlqVr1fakF20yEW5GiVLpVde9Zmefkf++zv4gvQs1T3sy11/pN//vZPQAAYKYp/gkAAKAjAhoAAAoENAAAFAho
         AAAoENAAAFAgoAEAoEBAAwBAgYAGAIACAQ0AAAXTHz+7BwAAzCSgAQCgQEADAEDB9MdP7wEAADMJaAAAKBDQAABQIKABAKBA
@@ -107,6 +107,8 @@ enum LabFixture {
         AABQMH3313sAAGAmAQ0AAAUCGgAACqb/+M0eAACYSUADAECBgAYAgAIBDQAABdP3frMHAABmmr732z0AADCTgAYAgILpud/u
         AQCAmQQ0AAAUCGgAACiYnv/dHgAAmElAAwBAgYAGAIACAQ0AAAXTC7/bAwAAM/0frUhkDFqS6SoAAAAASUVORK5CYII=
         """).replacingOccurrences(of: "\n", with: "")
+    static let landscapeSource = "data:image/png;base64," + landscapeBase64
+    static var landscapePNG: Data? { Data(base64Encoded: landscapeBase64) }
 
     static let source = """
     阅读材料 · 如何在长文中保持上下文
@@ -173,7 +175,7 @@ enum LabFixture {
 
     ### 图片
 
-    ![自建图片样本：山、水与阅读](\(landscapeSource))
+    ![自建图片样本：山、水与阅读](\#(landscapeSource))
 
     图片下方的文字用于检查资源到达后的行高与阅读位置。
 

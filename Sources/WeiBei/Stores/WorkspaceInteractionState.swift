@@ -21,6 +21,14 @@ struct ExcerptRevealRequest: Equatable {
     let recordID: UUID
 }
 
+struct ReaderSelectionTranslationRequest: Identifiable {
+    let id = UUID()
+    let revision: UInt64
+    let selection: SelectionContext
+    let anchor: SelectionPopoverAnchor
+    let service: ReaderTranslationService?
+}
+
 /// Transient selection / floating-agent interaction chrome.
 /// Isolated from `WorkspaceStore` so selection drag does not rebuild the whole workspace tree.
 @MainActor
@@ -33,6 +41,7 @@ final class WorkspaceInteractionState: ObservableObject {
     @Published var floatingSelectionPrompt = ""
     @Published var pinnedFloatingAgent = false
     @Published var selectionContext: SelectionContext?
+    @Published var readerSelectionTranslation: ReaderSelectionTranslationRequest?
     @Published var selectionAttachments: [SelectionContext] = []
     @Published var activeSelectionAskThreadID: UUID?
     @Published var keepFloatingSelectionForAnswer = false

@@ -166,10 +166,7 @@ enum CatalystBusinessCheck {
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
             // --drag-panes=agent-notes (default) | reader-agent | reader-notes
             let panes = CommandLine.arguments.first { $0.hasPrefix("--drag-panes=") }.map { String($0.dropFirst("--drag-panes=".count)) } ?? "agent-notes"
-            store.paneState.showReader = true
-            store.paneState.showAgent = panes != "reader-notes"
-            store.paneState.showNotes = panes != "reader-agent"
-            store.paneState.setDocumentPanes(reader: true, agent: true, notes: true)
+            store.paneState.setDocumentPanes(reader: true, agent: panes != "reader-notes", notes: panes != "reader-agent")
             // --drag-content=full opens a real material in the reader and a real note in the
             // editor, like a working session; default leaves both panes at their empty state.
             if CommandLine.arguments.contains("--drag-content=full") {
@@ -948,7 +945,8 @@ enum CatalystBusinessCheck {
             let attachmentDirectory = store.currentAttachmentDirectory!
             try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
             let imageURL = attachmentDirectory.appendingPathComponent("candidate-image.png")
-            try Data(contentsOf: Bundle.main.url(forResource: "landscape", withExtension: "png")!).write(to: imageURL, options: .atomic)
+            guard let image = LabFixture.landscapePNG else { throw Failure("candidate attachment fixture is invalid") }
+            try image.write(to: imageURL, options: .atomic)
             try await verifyConnectionOnboarding(store, endpoint: endpoint)
             try check("chat_inline_connection_cancel_retry_models_and_draft", true)
             let activeConnection = store.activeAgentProfileID
