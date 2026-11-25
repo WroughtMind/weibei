@@ -8,6 +8,7 @@ private typealias ReaderRepresentable = NSViewRepresentable
 typealias ReaderOverlayView = NSView
 #endif
 import Foundation
+import Observation
 import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -228,51 +229,124 @@ extension ImmersiveHoverTitleView where Actions == EmptyView {
     }
 }
 
-private struct ReaderMaterialTabs: ViewModifier {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weiBeiTextScale) private var textScale
-    private let horizontalInset: CGFloat = 10
-    let isVisible: Bool
+@MainActor @Observable
+final class ReaderMaterialTabHover {
+    enum Region: Hashable { case stack, unfolded }
 
-    func body(content: Content) -> some View {
-        VStack(spacing: 0) {
-            if isVisible {
-                let materials = store.readerTabMaterials
-                if !materials.isEmpty { tabStrip(materials) }
+    private(set) var expandedID: String?
+    @ObservationIgnored private var hoveredIDs: [Region: String] = [:]
+    @ObservationIgnored private var foldTask: Task<Void, Never>?
+
+    func update(_ hovering: Bool, itemID: String, in region: Region) {
+        if hovering {
+            // A departing paper may still receive hover events during its transition.
+            guard region == .stack || expandedID == itemID else { return }
+            hoveredIDs[region] = itemID
+            foldTask?.cancel()
+            if expandedID != itemID {
+                hoveredIDs[.unfolded] = nil
+                expandedID = itemID
             }
-            content
+        } else if hoveredIDs[region] == itemID {
+            hoveredIDs[region] = nil
+            guard expandedID == itemID, !hoveredIDs.values.contains(itemID) else { return }
+            foldTask?.cancel()
+            foldTask = Task { @MainActor [weak self] in
+                // Give the pointer time to cross from the exposed edge onto the paper.
+                try? await Task.sleep(for: .milliseconds(110))
+                guard !Task.isCancelled else { return }
+                self?.dismiss()
+            }
         }
     }
 
+    func dismiss() {
+        foldTask?.cancel()
+        foldTask = nil
+        hoveredIDs.removeAll()
+        if expandedID != nil { expandedID = nil }
+    }
+}
+
+private struct ReaderMaterialTabBounds: PreferenceKey {
+    static let defaultValue: [String: Anchor<CGRect>] = [:]
+
+    static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+        value.merge(nextValue()) { _, next in next }
+    }
+}
+
+@MainActor
+struct ReaderMaterialTabs: ViewModifier {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+    let isVisible: Bool
+    let hover: ReaderMaterialTabHover
+    private let horizontalInset: CGFloat = 10
+    private let paperWidth: CGFloat = 34
+    private let exposedWidth: CGFloat = 18
+
+    func body(content: Content) -> some View {
+        let materials = isVisible ? store.readerTabMaterials : []
+        VStack(spacing: 0) {
+            if !materials.isEmpty { tabStrip(materials) }
+            content
+        }
+        // Only the paper overlays the page on hover. The stack and reader keep
+        // their positions, so moving to another paper never shifts its hit area.
+        .overlayPreferenceValue(ReaderMaterialTabBounds.self) { anchors in
+            GeometryReader { geometry in
+                if let id = hover.expandedID,
+                   let item = materials.first(where: { $0.id == id }),
+                   let anchor = anchors[id] {
+                    let bounds = geometry[anchor]
+                    if bounds.maxX > 0, bounds.minX < geometry.size.width {
+                        let hinge = UnitPoint(
+                            x: bounds.midX / max(1, geometry.size.width),
+                            y: bounds.maxY / max(1, geometry.size.height)
+                        )
+                        ReaderMaterialPaperPlacement(
+                            tabBounds: bounds,
+                            inset: horizontalInset,
+                            maximumWidth: 248 * textScale
+                        ) {
+                            unfoldedPaper(item)
+                            Rectangle()
+                                .fill(WeiBeiTheme.paperRaised)
+                                .overlay(WeiBeiTheme.accentSoft)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.88, anchor: hinge).combined(with: .opacity))
+                    }
+                }
+            }
+            .animation(reduceMotion ? nil : WeiBeiMotion.hover, value: hover.expandedID)
+        }
+        .onChange(of: materials.map(\.id)) { _, ids in
+            if let id = hover.expandedID, !ids.contains(id) { hover.dismiss() }
+        }
+        .onDisappear { hover.dismiss() }
+    }
+
     private func tabStrip(_ materials: [StudyItem]) -> some View {
-        HStack(spacing: 0) {
-            GeometryReader { viewport in
-                let tabWidth = min(212 * textScale, max(1, viewport.size.width - horizontalInset * 2))
-                ScrollViewReader { scroll in
-                    ScrollView(.horizontal) {
-                        HStack(alignment: .bottom, spacing: 5) {
-                            ForEach(materials) { item in
-                                let title = store.displayTitle(for: item)
-                                ReaderMaterialTab(
-                                    title: title,
-                                    help: title + "\n" + store.displaySubtitle(for: item),
-                                    closeLabel: store.ui("关闭\(title)", "Close \(title)"),
-                                    isSelected: item.id == store.selectedItemID,
-                                    maximumWidth: tabWidth,
-                                    select: { store.selectReaderTab(item.id) },
-                                    close: { store.closeReaderTab(item.id) }
-                                )
+        let height = max(29, 24 * textScale + 4)
+        return HStack(spacing: 0) {
+            ScrollViewReader { scroll in
+                ScrollView(.horizontal) {
+                    HStack(alignment: .bottom, spacing: 0) {
+                        ForEach(Array(materials.enumerated()), id: \.element.id) { index, item in
+                            compactPaper(item, index: index, isLast: index == materials.count - 1)
                                 .id(item.id)
-                            }
-                        }
-                        .padding(.horizontal, horizontalInset)
-                        .frame(height: 36 * textScale, alignment: .bottom)
-                    }
-                    .onChange(of: store.selectedItemID, initial: true) { _, id in
-                        if let id {
-                            scroll.scrollTo(id)
                         }
                     }
+                    .padding(.horizontal, horizontalInset)
+                    .frame(height: height, alignment: .bottom)
+                }
+                .scrollIndicators(.hidden)
+                .onChange(of: store.selectedItemID, initial: true) { _, id in
+                    if let id { scroll.scrollTo(id) }
                 }
             }
             if store.selectedMaterialItem != nil, !store.materialPickerPresented {
@@ -280,75 +354,186 @@ private struct ReaderMaterialTabs: ViewModifier {
                     .padding(.trailing, 8)
             }
         }
-        .frame(height: 36 * textScale)
+        .frame(height: height)
         .background(alignment: .bottom) {
             Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.55))
+                .fill(WeiBeiTheme.hairline.opacity(0.48))
                 .frame(height: 1)
         }
         .background(WeiBeiTheme.paper)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(store.ui("已打开的资料", "Open materials"))
     }
-}
 
-private struct ReaderMaterialTab: View {
-    @Environment(\.weiBeiTextScale) private var textScale
-    @State private var hovering = false
-    let title: String
-    let help: String
-    let closeLabel: String
-    let isSelected: Bool
-    let maximumWidth: CGFloat
-    let select: () -> Void
-    let close: () -> Void
-
-    private var shape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: 7, topTrailingRadius: 9)
+    private func compactPaper(_ item: StudyItem, index: Int, isLast: Bool) -> some View {
+        let title = store.displayTitle(for: item)
+        let selected = item.id == store.selectedItemID
+        let height: CGFloat = selected ? 24 : (index.isMultiple(of: 2) ? 18 : 21)
+        return Button {
+            store.selectReaderTab(item.id)
+        } label: {
+            // Each overlapping sheet has its own non-overlapping pointer target.
+            Color.clear
+                .frame(width: isLast ? paperWidth : exposedWidth, height: height)
+                .background(alignment: .bottomLeading) {
+                    ReaderMaterialPaper(marked: selected || hover.expandedID == item.id, lifted: false)
+                        .frame(width: paperWidth, height: height)
+                        .allowsHitTesting(false)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAction(named: Text(closeLabel(for: title))) { close(item.id) }
+        .contextMenu {
+            Button(closeLabel(for: title)) { close(item.id) }
+        }
+        .onHover { hover.update($0, itemID: item.id, in: .stack) }
+        .anchorPreference(key: ReaderMaterialTabBounds.self, value: .bounds) { [item.id: $0] }
     }
 
-    var body: some View {
-        HStack(spacing: 0) {
-            Button(action: select) {
+    private func unfoldedPaper(_ item: StudyItem) -> some View {
+        let title = store.displayTitle(for: item)
+        let label = closeLabel(for: title)
+        return HStack(spacing: 0) {
+            Button {
+                store.selectReaderTab(item.id)
+            } label: {
                 Text(title)
-                    .weiBeiText(12, weight: isSelected ? .semibold : .medium)
+                    .weiBeiText(12, weight: .semibold)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .padding(.leading, 10)
                     .padding(.trailing, 3)
-                    .frame(height: (isSelected ? 31 : 27) * textScale)
+                    .frame(height: 34 * textScale)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(isSelected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
-            .help(help)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .help(title + "\n" + store.displaySubtitle(for: item))
 
-            Button(action: close) {
+            Button {
+                close(item.id)
+            } label: {
                 Image(systemName: "xmark")
                     .weiBeiText(8.5, weight: .semibold)
             }
             .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-            .accessibilityLabel(closeLabel)
-            .help(closeLabel)
-            .padding(.trailing, 2)
+            .accessibilityLabel(label)
+            .help(label)
+            .padding(.trailing, 4)
             .layoutPriority(1)
         }
-        .frame(maxWidth: maximumWidth, alignment: .leading)
         .background {
-            shape
-                .fill(isSelected ? WeiBeiTheme.paperRaised : WeiBeiTheme.paperInset.opacity(hovering ? 0.94 : 0.55))
-                .overlay {
-                    if isSelected { shape.fill(WeiBeiTheme.accentSoft) }
-                }
-                .overlay {
-                    shape.strokeBorder(
-                        isSelected ? WeiBeiTheme.accent.opacity(hovering ? 0.63 : 0.40) : WeiBeiTheme.hairline.opacity(0.62),
-                        lineWidth: 1
-                    )
-                }
+            ReaderMaterialPaper(marked: true, lifted: true)
+                .allowsHitTesting(false)
         }
-        .onHover { hovering = $0 }
+        .contentShape(Rectangle())
+        .onHover { hover.update($0, itemID: item.id, in: .unfolded) }
+    }
+
+    private func close(_ id: String) {
+        if hover.expandedID == id { hover.dismiss() }
+        store.closeReaderTab(id)
+    }
+
+    private func closeLabel(for title: String) -> String {
+        store.ui("关闭\(title)", "Close \(title)")
+    }
+}
+
+/// Keeps even the rightmost paper's title and close button inside the reader.
+private struct ReaderMaterialPaperPlacement: Layout {
+    let tabBounds: CGRect
+    let inset: CGFloat
+    let maximumWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let paper = subviews.first else { return }
+        let width = max(1, min(maximumWidth, bounds.width - inset * 2))
+        let size = paper.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        let left = max(inset, min(tabBounds.minX, bounds.width - inset - size.width))
+        paper.place(
+            at: CGPoint(x: bounds.minX + left, y: bounds.minY + tabBounds.maxY - 1),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(size)
+        )
+        // The crease joins the two surfaces without a border across the hinge.
+        let seamLeft = max(left, tabBounds.minX) + 1
+        let seamRight = min(left + size.width, tabBounds.maxX) - 1
+        if let seam = subviews.dropFirst().first, seamRight > seamLeft {
+            seam.place(
+                at: CGPoint(x: bounds.minX + seamLeft, y: bounds.minY + tabBounds.maxY - 3),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: seamRight - seamLeft, height: 4)
+            )
+        }
+    }
+}
+
+private struct ReaderMaterialPaper: View {
+    let marked: Bool
+    let lifted: Bool
+
+    var body: some View {
+        let outline = ReaderMaterialPaperShape()
+        outline
+            .fill(WeiBeiTheme.paperRaised)
+            .overlay {
+                outline.fill(marked ? WeiBeiTheme.accentSoft : WeiBeiTheme.paperInset.opacity(0.45))
+            }
+            .overlay {
+                outline.fill(.linearGradient(
+                    colors: [.white.opacity(0.17), .black.opacity(0.06)],
+                    startPoint: .top, endPoint: .bottom
+                ))
+            }
+            .overlay(alignment: .topTrailing) {
+                Path { path in
+                    path.move(to: .zero)
+                    path.addLine(to: CGPoint(x: 6, y: 6))
+                    path.addLine(to: CGPoint(x: 0, y: 6))
+                    path.closeSubpath()
+                }
+                .fill(.black.opacity(0.10))
+                .frame(width: 6, height: 6)
+            }
+            .overlay {
+                outline.stroke(marked ? WeiBeiTheme.accent.opacity(0.43) : WeiBeiTheme.hairline.opacity(0.66), lineWidth: 0.75)
+            }
+            .shadow(color: .black.opacity(lifted ? 0.17 : 0.13), radius: lifted ? 4 : 1, x: -1, y: lifted ? 2 : 0)
+    }
+}
+
+private struct ReaderMaterialPaperShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cut = min(6, rect.width / 2)
+        let radius = min(4, rect.width / 2)
+        return Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX + radius, y: rect.minY),
+                control: CGPoint(x: rect.minX, y: rect.minY)
+            )
+            path.addLine(to: CGPoint(x: rect.maxX - cut, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cut))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.closeSubpath()
+        }
+    }
+}
+
+private struct ReaderFloatingTitleVisibility: ViewModifier {
+    let hover: ReaderMaterialTabHover
+
+    func body(content: Content) -> some View {
+        if hover.expandedID == nil { content }
     }
 }
 
@@ -361,6 +546,7 @@ struct ReaderView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @State private var materialTabHover = ReaderMaterialTabHover()
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
@@ -468,6 +654,7 @@ struct ReaderView: View {
                         importedDocumentAdaptationControl
                     }
                 }
+                .modifier(ReaderFloatingTitleVisibility(hover: materialTabHover))
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -549,10 +736,13 @@ struct ReaderView: View {
         .foregroundStyle(Color(weiBeiNativeColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.feedback, value: pdfBrowseMode)
         .animation(WeiBeiMotion.visibility(pdfHasSelectableText != false), value: pdfHasSelectableText)
-        .modifier(ReaderMaterialTabs(isVisible: showsFloatingTitle && !ContentRailMetrics.isRailOnly(
-            availableWidth: measuredPaneSize.width,
-            allowed: supportsContentRail && !isImmersive
-        )))
+        .modifier(ReaderMaterialTabs(
+            isVisible: showsFloatingTitle && !ContentRailMetrics.isRailOnly(
+                availableWidth: measuredPaneSize.width,
+                allowed: supportsContentRail && !isImmersive
+            ),
+            hover: materialTabHover
+        ))
     }
 
     var body: some View {

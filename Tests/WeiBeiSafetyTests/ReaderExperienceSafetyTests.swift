@@ -2,6 +2,33 @@ import XCTest
 @testable import WeiBei
 
 final class ReaderExperienceSafetyTests: XCTestCase {
+    @MainActor
+    func testPaperTabHoverSurvivesMovingOntoThePaperAndFoldsAfterLeaving() async throws {
+        let hover = ReaderMaterialTabHover()
+        hover.update(true, itemID: "first", in: .stack)
+        XCTAssertEqual(hover.expandedID, "first")
+
+        hover.update(false, itemID: "first", in: .stack)
+        hover.update(true, itemID: "first", in: .unfolded)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(hover.expandedID, "first")
+
+        hover.update(true, itemID: "second", in: .stack)
+        hover.update(false, itemID: "first", in: .unfolded)
+        hover.update(true, itemID: "first", in: .unfolded)
+        XCTAssertEqual(hover.expandedID, "second")
+
+        // At the seam the expanded paper can report entry before the tab reports exit.
+        hover.update(true, itemID: "second", in: .unfolded)
+        hover.update(false, itemID: "second", in: .stack)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(hover.expandedID, "second")
+
+        hover.update(false, itemID: "second", in: .unfolded)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertNil(hover.expandedID)
+    }
+
     func testPDFPageJumpKeepsBrowseMode() {
         let scroll = PDFPageJumpPlan.resolve(targetPageIndex: 3, pageCount: 10, browseMode: .scroll)
         XCTAssertEqual(scroll.browseMode, .scroll)
