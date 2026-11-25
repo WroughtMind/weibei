@@ -1279,32 +1279,7 @@ struct SettingsView: View {
 
     /// Shared compact dropdown — hugs label width, no forced wide track.
     func compactMenu<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        Menu {
-            content()
-        } label: {
-            HStack(spacing: 5) {
-                Text(title)
-                    .font(SettingsType.menu)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .weiBeiText(9.5, weight: .bold)
-            }
-            .foregroundStyle(WeiBeiTheme.ink)
-            .padding(.horizontal, 9)
-            .frame(height: 26)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(0.52),
-                stroke: WeiBeiTheme.hairline.opacity(0.3),
-                cornerRadius: 8
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .fixedSize(horizontal: true, vertical: true)
+        WeiBeiCompactMenu(title: title, content: content)
     }
 
     /// Shared Settings group title label.
@@ -1389,4 +1364,43 @@ private enum SettingsType {
     static let detail: Font = .system(size: 12, weight: .regular)
     static let pill: Font = .system(size: 12, weight: .medium)
     static let menu: Font = .system(size: 13, weight: .semibold)
+}
+
+struct WeiBeiCompactMenu<Content: View>: View {
+    let title: String
+    private let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        Menu {
+            content
+        } label: {
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(SettingsType.menu)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .weiBeiText(9.5, weight: .bold)
+            }
+            .foregroundStyle(WeiBeiTheme.ink)
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: true)
+    }
 }

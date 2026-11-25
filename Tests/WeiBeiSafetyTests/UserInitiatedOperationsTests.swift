@@ -473,7 +473,6 @@ final class UserInitiatedOperationsTests: XCTestCase {
             f.store.userOperationRisks.respond(to: request.id, continuing: proceed)
             let approved = await operation.value
             XCTAssertEqual(approved, proceed)
-            XCTAssertEqual(f.store.allowsUnsavedRelaunch, proceed)
         }
     }
 

@@ -68,9 +68,11 @@
 		3889CAE016D3AABC7C0E2FD3 /* CourseSidebarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FEBE4390A6A8FE583C648F3 /* CourseSidebarModel.swift */; };
 		3945DE57E7ACFD0281D0C389 /* WebResearchClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE4C9792B1BAD499710403ED /* WebResearchClient.swift */; };
 		3A7335850B204B5F1CA79B50 /* NotesAgentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DE8DACA6688D914E9C1F66F /* NotesAgentView.swift */; };
+		EFF232B1FEF67D09B81C58F9 /* NotePDFExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC20D2450D53728D6C680951 /* NotePDFExportView.swift */; };
 		3B2C8E694D9261EF99106BA7 /* MarkdownView in Frameworks */ = {isa = PBXBuildFile; productRef = E0D7D5150911C6F073F5FF0F /* MarkdownView */; };
 		3D7921B6977B886D600C828C /* LatestFirstSerialQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 851F281152AB3195E523BF46 /* LatestFirstSerialQueue.swift */; };
 		3DCE646D8573EDB4493C39F2 /* WeiBeiWebViewConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30D3D6648BFD9F4924004459 /* WeiBeiWebViewConfiguration.swift */; };
+		C4AA0AA90A7387ED5BC707B3 /* NotePDFRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A177ACDF21462310E21DF2 /* NotePDFRenderer.swift */; };
 		3E13BEBA9519613FC404B41E /* genui.js in Resources */ = {isa = PBXBuildFile; fileRef = 24C681E3896A34D48AA1F02F /* genui.js */; };
 		3EB81C20B5B942AADD856447 /* CourseDocNoteWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED28080243B8A8B552763344 /* CourseDocNoteWorkspaceView.swift */; };
 		3EBF899A4DE4F9084B8B59E0 /* WorkspaceStore+LibraryRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44E87C1AE4D0D3E665F54F98 /* WorkspaceStore+LibraryRoot.swift */; };
@@ -81,6 +83,7 @@
 		4427EFB8A520A618FE4B07BC /* NativeTurnLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 053A18620B4F6117A1DBFC26 /* NativeTurnLocation.swift */; };
 		44B137196B53B458D82CB254 /* CourseLibraryVolatility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81330F2474351960F7D4B5D4 /* CourseLibraryVolatility.swift */; };
 		452B038A4F23FC8F44AE7CE5 /* lanting-clear-breeze.png in Resources */ = {isa = PBXBuildFile; fileRef = 04A4F014A0497E39A06AF729 /* lanting-clear-breeze.png */; };
+		775AA3B3CB9440148AB11940 /* note-pdf-mark.png in Resources */ = {isa = PBXBuildFile; fileRef = 268586696E6B5B337660E2C3 /* note-pdf-mark.png */; };
 		45F978B3A4DE641D75C6236A /* StableDocumentWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B215538091FA28517FF16935 /* StableDocumentWorkspace.swift */; };
 		47213ABE61EFF39E269F8DA5 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 06C5A6EF032B27B91A36760F /* libsqlite3.tbd */; };
 		483969E85BDE060DE0E0E0A8 /* WorkspaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B36FBF40C988CDB377C7075 /* WorkspaceModels.swift */; };
@@ -305,6 +308,7 @@
 		02BFA4C85D8FAA8E7402F24C /* AgentVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentVisualizationView.swift; sourceTree = "<group>"; };
 		034D6D52BAEAD08A9A0FAEDE /* WorkspaceStore+SelectionRemark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceStore+SelectionRemark.swift"; sourceTree = "<group>"; };
 		04A4F014A0497E39A06AF729 /* lanting-clear-breeze.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "lanting-clear-breeze.png"; sourceTree = "<group>"; };
+		268586696E6B5B337660E2C3 /* note-pdf-mark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "note-pdf-mark.png"; sourceTree = "<group>"; };
 		04E38AE36B5042658CF2A6F3 /* WorkspaceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceController.swift; sourceTree = "<group>"; };
 		053A18620B4F6117A1DBFC26 /* NativeTurnLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTurnLocation.swift; sourceTree = "<group>"; };
 		06C5A6EF032B27B91A36760F /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
@@ -340,6 +344,7 @@
 		2DEF0E8D375B722284A1371B /* CourseKnowledgeIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseKnowledgeIndex.swift; sourceTree = "<group>"; };
 		2FE8D67A36CCE15B5C47B80D /* ContentRailPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentRailPolicy.swift; sourceTree = "<group>"; };
 		30D3D6648BFD9F4924004459 /* WeiBeiWebViewConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiWebViewConfiguration.swift; sourceTree = "<group>"; };
+		76A177ACDF21462310E21DF2 /* NotePDFRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotePDFRenderer.swift; sourceTree = "<group>"; };
 		3182D144EA522AB5D660975B /* CourseLibraryVolatilityBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseLibraryVolatilityBanner.swift; sourceTree = "<group>"; };
 		32C245CD2CC84C2F2CE3198E /* Editor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Editor; path = ../Sources/WeiBei/Resources/Editor; sourceTree = SOURCE_ROOT; };
 		343CB37ECF7BC6AFFA2D37D5 /* AgentComposerTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentComposerTextEditor.swift; sourceTree = "<group>"; };
@@ -420,6 +425,7 @@
 		8C8FBC4457BB01D65F5B4F3E /* AgentTurnReadingPosition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTurnReadingPosition.swift; sourceTree = "<group>"; };
 		8DAC6981132EB450AA42C611 /* CatalystComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalystComposer.swift; sourceTree = "<group>"; };
 		8DE8DACA6688D914E9C1F66F /* NotesAgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesAgentView.swift; sourceTree = "<group>"; };
+		FC20D2450D53728D6C680951 /* NotePDFExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotePDFExportView.swift; sourceTree = "<group>"; };
 		8E93D3DD50F06C9F4B6003C2 /* WeiBeiAppBuildInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeiBeiAppBuildInfo.swift; sourceTree = "<group>"; };
 		8FA2D0FE3CC2CBF581233C41 /* SelectionAnchors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionAnchors.swift; sourceTree = "<group>"; };
 		8FC7684BB0F10F446EFCE529 /* ImportFileCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportFileCopy.swift; sourceTree = "<group>"; };
@@ -789,6 +795,7 @@
 				58E2A360B0A36BDDAF908FA3 /* ExcerptBookView.swift */,
 				9B7A52A92DEB20B083485A70 /* HoverPassThroughRegion.swift */,
 				8DE8DACA6688D914E9C1F66F /* NotesAgentView.swift */,
+				FC20D2450D53728D6C680951 /* NotePDFExportView.swift */,
 				A434A3C22BC374DD87D0E041 /* PaneSeatMotion.swift */,
 				178A366B5659AC7A47E7AA30 /* PDFReaderOpenSafety.swift */,
 				9E988A09E37D58AB7C5DB6EF /* ReaderPDFContentRailPreview.swift */,
@@ -865,6 +872,7 @@
 				E351033849C34CF53F7F41EC /* WeiBeiPerf.swift */,
 				EA7C69F915A6ED6E8562DD64 /* WeiBeiResources.swift */,
 				30D3D6648BFD9F4924004459 /* WeiBeiWebViewConfiguration.swift */,
+				76A177ACDF21462310E21DF2 /* NotePDFRenderer.swift */,
 				27CFEABFEA9E0BD9DD27C865 /* WorkspaceFileDialog.swift */,
 				E4DECE1968935604B8E2CB07 /* WorkspaceViewSupport.swift */,
 			);
@@ -980,6 +988,7 @@
 			isa = PBXGroup;
 			children = (
 				FD7373826FAD5979B3D11A95 /* SOURCES.md */,
+				268586696E6B5B337660E2C3 /* note-pdf-mark.png */,
 				D7A882947D164DDFDE3A64BE /* Calligraphy */,
 			);
 			path = Inspiration;
@@ -1139,6 +1148,7 @@
 				8AEFB6F1D755EABEF77A3B91 /* echarts-full.js in Resources */,
 				140F42A96634A9FE89C189F4 /* three.js in Resources */,
 				452B038A4F23FC8F44AE7CE5 /* lanting-clear-breeze.png in Resources */,
+				775AA3B3CB9440148AB11940 /* note-pdf-mark.png in Resources */,
 				E498931F372E542246CCF1E8 /* lanting-observe-kinds.png in Resources */,
 				CF4F112CD89D07F2AFC8AAC4 /* lanting-universe.png in Resources */,
 			);
@@ -1348,6 +1358,7 @@
 				527B0A1E1032F261B1DD97A0 /* NoteEditorBridge.swift in Sources */,
 				FE6FCF3FB5EF87B9FE0050B8 /* NoteRecoveryStore.swift in Sources */,
 				3A7335850B204B5F1CA79B50 /* NotesAgentView.swift in Sources */,
+				EFF232B1FEF67D09B81C58F9 /* NotePDFExportView.swift in Sources */,
 				9FF041C038C5AB9C8A27287A /* PDFReaderOpenSafety.swift in Sources */,
 				A29105E5484EFF5BE88B2979 /* PaneSeatMotion.swift in Sources */,
 				2C624A003FFDB2EBD1194CF9 /* PreparedContent.swift in Sources */,
@@ -1373,6 +1384,7 @@
 				BF06CA2E391053E4D7CCBF08 /* WeiBeiSegmentedControl.swift in Sources */,
 				B795397FAEB4F27CC8BBF72E /* WeiBeiUpdateService.swift in Sources */,
 				3DCE646D8573EDB4493C39F2 /* WeiBeiWebViewConfiguration.swift in Sources */,
+				C4AA0AA90A7387ED5BC707B3 /* NotePDFRenderer.swift in Sources */,
 				ED8E419FDE9875B736216C16 /* WindowBridgeContract.swift in Sources */,
 				838BCEC2CBA1CA04DE679531 /* WorkspaceController.swift in Sources */,
 				805133E50FD0E74E5F67E832 /* WorkspaceFileDialog.swift in Sources */,

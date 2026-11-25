@@ -222,6 +222,62 @@ final class NoteAutosaveResponsivenessTests: XCTestCase {
         }
     }
 
+    func testTimedOutPDFExportStillLetsSharedSnapshotSaveLatestMarkdown() throws {
+        let note = try fixture()
+        defer { try? FileManager.default.removeItem(at: note.root) }
+        let store = note.store
+        var requests: [NoteEditorSnapshotRequest] = []
+        let session = NoteEditingSession(
+            documentID: note.item.id,
+            idleSnapshotDelay: .seconds(30),
+            maximumSnapshotAge: .seconds(30),
+            snapshotTimeout: .milliseconds(30),
+            onSnapshotRequest: { requests.append($0) },
+            onSnapshotAccepted: { [weak store] snapshot in
+                store?.acceptNoteEditorSnapshot(snapshot)
+            }
+        )
+        store.noteEditingSession = session
+        defer { session.invalidateBridgeGeneration() }
+
+        func markDirty(_ revision: UInt64) {
+            session.receive(NoteEditorDirtyChangedEvent(
+                documentID: note.item.id, documentGeneration: session.documentGeneration,
+                revision: revision, dirty: true
+            ))
+        }
+        func reply(to request: NoteEditorSnapshotRequest, revision: UInt64, markdown: String) -> Bool {
+            session.receive(NoteEditorSnapshotReadyEvent(
+                requestID: request.requestID ?? request.commandID, documentID: request.documentID,
+                documentGeneration: request.documentGeneration, revision: revision, markdown: markdown
+            ))
+        }
+
+        try store.waitForCourseFileOperation {
+            markDirty(1)
+            XCTAssertTrue(session.requestSnapshot())
+            do {
+                _ = try await store.notePDFSource(itemID: note.item.id)
+                XCTFail("export should time out with its shared save request")
+            } catch {
+                XCTAssertEqual(error as? NoteEditingSessionError, .snapshotTimedOut)
+            }
+
+            let first = try XCTUnwrap(requests.first)
+            XCTAssertEqual(requests.count, 1)
+            markDirty(2)
+            XCTAssertFalse(reply(to: first, revision: 1, markdown: "较早的草稿"))
+            XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "磁盘基线")
+            let retry = try XCTUnwrap(requests.last)
+            XCTAssertEqual(retry.minimumRevision, 2)
+            XCTAssertTrue(reply(to: retry, revision: 2, markdown: "最新的草稿"))
+            await store.waitForNoteEditorSnapshotPersistence(documentID: note.item.id)
+            XCTAssertEqual(try String(contentsOf: note.url, encoding: .utf8), "最新的草稿")
+            XCTAssertEqual(session.saveStatus, .writtenToFile)
+            XCTAssertFalse(session.dirty)
+        }
+    }
+
     func testNoteSelectionContinuesAfterFirstSnapshotIsSaved() throws {
         let note = try fixture()
         defer { try? FileManager.default.removeItem(at: note.root) }
