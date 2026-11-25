@@ -26,6 +26,7 @@ struct ReaderSelectionTranslationRequest: Identifiable {
     let revision: UInt64
     let selection: SelectionContext
     let anchor: SelectionPopoverAnchor
+    let service: ReaderTranslationService?
 }
 
 /// Transient selection / floating-agent interaction chrome.

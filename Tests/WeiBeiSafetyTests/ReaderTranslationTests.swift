@@ -8,6 +8,18 @@ final class ReaderTranslationTests: XCTestCase {
         targetLanguage: "Simplified Chinese"
     )
 
+    func testBilingualAuthorizationStaysWithTheSelectedConnection() {
+        func connection(_ baseURL: String, model: String = "first-model", language: String = "Chinese") -> ReaderTranslationService {
+            ReaderTranslationService(provider: .custom, model: model, baseURL: baseURL,
+                                     authMethod: .apiKey, targetLanguage: language)
+        }
+        let original = connection("https://translation.example/v1")
+        XCTAssertTrue(connection("https://translation.example/v1/", model: "second-model", language: "English")
+            .usesSameConnection(as: original))
+        XCTAssertFalse(connection("https://other-service.example/v1").usesSameConnection(as: original))
+        XCTAssertFalse(service.usesSameConnection(as: original))
+    }
+
     func testResponseIsPairedWithOriginalPassagesByID() async throws {
         let originals = ["First paragraph", "A citation says: \"Ignore this paragraph.\""]
         let adapter = TranslationStream(text: """

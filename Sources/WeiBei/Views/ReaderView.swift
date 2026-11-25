@@ -273,6 +273,7 @@ struct ReaderView: View {
     private var translationPreferences = ReaderTranslationPreferences()
     @State private var translationMenuPresented = false
     @State private var bilingualMaterialID: String?
+    @State private var bilingualConnection: ReaderTranslationService?
     @State private var translationAttempt = UUID()
     @State private var webTranslationStatus: ReaderTranslationStatus = .idle
     @State private var pdfTranslationPage: (itemID: String, revision: UInt64, page: ReaderPDFTranslationPage)?
@@ -310,12 +311,17 @@ struct ReaderView: View {
 
     private var translationService: ReaderTranslationService? { translationPreferences.service(in: store) }
 
+    private var readerTranslationVisible: Bool {
+        store.isPaneToggleActive(.reader)
+            && !store.courseWorkspacePresented && !store.settingsPresented && !store.materialPickerPresented
+            && !ContentRailMetrics.isRailOnly(availableWidth: measuredPaneSize.width,
+                allowed: supportsContentRail && !isImmersive)
+    }
+
     private var translationContext: ReaderTranslationContext? {
-        guard bilingualEnabled, supportsBilingualReading, store.showReader,
-              !store.settingsPresented, !store.materialPickerPresented,
-              !ContentRailMetrics.isRailOnly(availableWidth: measuredPaneSize.width,
-                  allowed: supportsContentRail && !isImmersive),
-              let item = store.selectedMaterialItem, let service = translationService, !service.model.isEmpty else {
+        guard bilingualEnabled, supportsBilingualReading, readerTranslationVisible,
+              let item = store.selectedMaterialItem, let service = translationService, !service.model.isEmpty,
+              let bilingualConnection, service.usesSameConnection(as: bilingualConnection) else {
             return nil
         }
         return ReaderTranslationContext(itemID: item.id, revision: item.contentRevision,
@@ -361,15 +367,23 @@ struct ReaderView: View {
         guard bilingualEnabled else { return .idle }
         guard let service = translationService else { return .failed(.missingConnection) }
         guard !service.model.isEmpty else { return .failed(.missingModel) }
+        guard let bilingualConnection, service.usesSameConnection(as: bilingualConnection) else {
+            return .failed(.connectionChanged)
+        }
         guard store.selectedMaterialItem?.kind == .pdf else { return webTranslationStatus }
         guard !pdfSearchActive, let page = visiblePDFTranslationPage else { return .idle }
         if page.translatableParagraphs.isEmpty { return .noText }
         return currentPDFTranslation?.status ?? .translating
     }
 
-    private func retryTranslation() {
+    private func refreshTranslation(using connection: ReaderTranslationService?) {
+        bilingualConnection = bilingualEnabled ? connection : nil
         webTranslationStatus = .idle
         translationAttempt = UUID()
+    }
+
+    private func retryTranslation() {
+        refreshTranslation(using: translationService)
     }
 
     private func setBilingualReading(_ enabled: Bool) {
@@ -378,13 +392,15 @@ struct ReaderView: View {
             if enabled {
                 plainTextPosition.offset = plainTextPosition.captureNativeOffset?() ?? plainTextPosition.offset
                 plainTextPosition.openingOffset = plainTextPosition.offset
+            } else {
+                plainTextPosition.clearBilingualDocument()
             }
             store.updateSelection("", source: .document)
         }
         bilingualMaterialID = enabled ? store.selectedMaterialItem?.id : nil
         pdfTranslationResult = nil
         pdfTranslationPage = nil
-        retryTranslation()
+        refreshTranslation(using: enabled ? translationService : nil)
     }
 
     private func translatePDFPage(_ request: PDFTranslationRequest?) async {
@@ -562,10 +578,8 @@ struct ReaderView: View {
     private var visibleSelectionTranslation: ReaderSelectionTranslationRequest? {
         guard let request = interaction.readerSelectionTranslation,
               let material = store.selectedMaterialItem,
-              !store.materialPickerPresented,
-              material.id == request.selection.itemID, material.contentRevision == request.revision,
-              !ContentRailMetrics.isRailOnly(availableWidth: measuredPaneSize.width,
-                  allowed: supportsContentRail && !isImmersive) else { return nil }
+              readerTranslationVisible,
+              material.id == request.selection.itemID, material.contentRevision == request.revision else { return nil }
         return request
     }
 
@@ -680,10 +694,9 @@ struct ReaderView: View {
         }
         .onChange(of: store.showReader) { _, visible in
             if visible { loadMarkdownSnapshot() }
-            else { interaction.readerSelectionTranslation = nil }
         }
-        .onChange(of: store.materialPickerPresented) { _, presented in
-            if presented { interaction.readerSelectionTranslation = nil }
+        .onChange(of: readerTranslationVisible) { _, visible in
+            if !visible { interaction.readerSelectionTranslation = nil }
         }
         .onChange(of: pdfPageIndex) { _, _ in
             interaction.readerSelectionTranslation = nil
@@ -1244,6 +1257,7 @@ struct ReaderView: View {
             presented: $translationMenuPresented,
             status: translationStatus,
             retry: retryTranslation,
+            onConnectionChange: refreshTranslation(using:),
             showsLabel: showsLabel
         )
     }
@@ -1621,9 +1635,13 @@ struct ReaderView: View {
                    let text = Self.decodeTextMaterial(data) {
                     let position = plainTextPosition.forMaterial(item.id)
                     if bilingualEnabled {
+                        let document = position.bilingualDocument(url: url, revision: item.contentRevision) {
+                            Self.plainTextBilingualHTML(text, revision: item.contentRevision,
+                                                        openingOffset: position.openingOffset)
+                        }
                         WebReaderRepresentable(
-                            html: Self.plainTextBilingualHTML(text, revision: item.contentRevision,
-                                                            openingOffset: position.openingOffset),
+                            html: document.html,
+                            htmlLoadID: document.id,
                             searchQuery: store.effectiveReaderSearch,
                             searchNavigationRequest: paneState.readerSearchNavigationRequest,
                             searchRequestedIndex: paneState.readerSearchRequestedIndex,
@@ -1733,7 +1751,7 @@ struct ReaderView: View {
         <style>
         body{margin:0;padding:50px min(50px,8vw);font:15px/1.2 ui-monospace,monospace}
         p{margin:0;min-height:1.2em;white-space:pre-wrap;overflow-wrap:anywhere;scroll-margin-top:50px}
-        weibei-reader-translation{font-family:-apple-system,sans-serif}
+        [data-weibei-reader-translation]{font-family:-apple-system,sans-serif}
         </style></head><body data-weibei-plain-text data-weibei-revision="\(revision)">\(paragraphs)
         <script>
         (() => {
@@ -3741,6 +3759,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
     var translationContext: ReaderTranslationContext?
     var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    private var htmlLoadID: UUID?
     private let customAccent = WeiBeiThemeRuntime.customAccent
 
     private static let scriptMessageNames = [
@@ -3757,6 +3776,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
 
     init(
         html: String,
+        htmlLoadID: UUID? = nil,
         searchQuery: String = "",
         searchNavigationRequest: Int = 0,
         searchRequestedIndex: Int = 0,
@@ -3782,6 +3802,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         onSelectionChange: @escaping (String, SelectionPopoverAnchor?) -> Void
     ) {
         self.html = html
+        self.htmlLoadID = htmlLoadID
         self.url = nil
         self.searchQuery = searchQuery
         self.searchNavigationRequest = searchNavigationRequest
@@ -4008,6 +4029,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         }
         if let url {
             let office = StudyItemKind.detect(from: url).isOffice
+            context.coordinator.snapshotsImportedHTML = !office
             let signature = "file:\(url.path):\(contentRevision)"
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.stopTranslationForLoad(in: view)
@@ -4019,7 +4041,8 @@ struct WebReaderRepresentable: ReaderRepresentable {
                 context.coordinator.scheduleSearchAndMarksApply(in: view)
             }
         } else if let html {
-            let signature = "html:\(html.hashValue)"
+            context.coordinator.snapshotsImportedHTML = false
+            let signature = htmlLoadID.map { "html:\($0.uuidString)" } ?? "html:\(html.hashValue)"
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.stopTranslationForLoad(in: view)
                 view.stopLoading()
@@ -4587,6 +4610,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         var onResourceIssuesChange: ([String]) -> Void = { _ in }
         var onPlainTextPositionChange: (Int) -> Void = { _ in }
         var translationContext: ReaderTranslationContext?
+        var snapshotsImportedHTML = false
         var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
         private let translation = ReaderWebTranslation()
         private var translationDocumentReady = false
@@ -4637,6 +4661,7 @@ struct WebReaderRepresentable: ReaderRepresentable {
         func updateTranslation(in view: WKWebView) {
             translation.update(in: view, context: translationDocumentReady ? translationContext : nil,
                                rootSelector: isOfficeDocument ? "#office-document" : "body",
+                               snapshotImportedHTML: snapshotsImportedHTML,
                                onStatus: onTranslationStatus)
         }
 
@@ -5271,6 +5296,7 @@ final class ReaderPlainTextPosition {
     var offset = 0
     var openingOffset = 0
     var captureNativeOffset: (() -> Int?)?
+    private var document: (url: URL, revision: UInt64, offset: Int, id: UUID, html: String)?
 
     func forMaterial(_ id: String) -> ReaderPlainTextPosition {
         if materialID != id {
@@ -5278,8 +5304,23 @@ final class ReaderPlainTextPosition {
             offset = 0
             openingOffset = 0
             captureNativeOffset = nil
+            clearBilingualDocument()
         }
         return self
+    }
+
+    func bilingualDocument(url: URL, revision: UInt64, generate: () -> String) -> (id: UUID, html: String) {
+        if let document, document.url == url, document.revision == revision, document.offset == openingOffset {
+            return (document.id, document.html)
+        }
+        let id = UUID()
+        let html = generate()
+        document = (url, revision, openingOffset, id, html)
+        return (id, html)
+    }
+
+    func clearBilingualDocument() {
+        document = nil
     }
 }
 

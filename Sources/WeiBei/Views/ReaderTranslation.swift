@@ -20,7 +20,8 @@ struct ReaderTranslationPreferences: DynamicProperty {
     }
 
     @MainActor
-    func service(in store: WorkspaceStore) -> ReaderTranslationService? {
+    func service(in store: WorkspaceStore, selectedConnection: String? = nil) -> ReaderTranslationService? {
+        let connectionID = selectedConnection ?? connectionID
         let targetID = languageID.isEmpty ? store.interfaceLanguage.rawValue : languageID
         let target = Locale(identifier: "en").localizedString(forIdentifier: targetID) ?? targetID
         if connectionID.isEmpty {
@@ -47,7 +48,7 @@ struct ReaderTranslationContext: Equatable {
 }
 
 enum ReaderTranslationProblem: Error, Equatable {
-    case missingConnection, missingModel, unauthorized, rateLimited, insufficientQuota, offline, incomplete, failed
+    case missingConnection, connectionChanged, missingModel, unauthorized, rateLimited, insufficientQuota, offline, incomplete, failed
 
     init(_ error: Error) {
         if let error = error as? ReaderTranslationService.Failure {
@@ -79,6 +80,8 @@ enum ReaderTranslationProblem: Error, Equatable {
         switch self {
         case .missingConnection:
             language.text("翻译连接不可用。请在翻译菜单中选择连接。", "The translation connection is unavailable. Choose a connection in the translation menu.")
+        case .connectionChanged:
+            language.text("翻译连接已变更。", "The translation connection has changed.")
         case .missingModel:
             language.text("请先为翻译连接选择模型。", "Choose a model for the translation connection.")
         case .unauthorized:
@@ -107,6 +110,7 @@ struct ReaderTranslationMenu: View {
     @Binding var presented: Bool
     var status: ReaderTranslationStatus
     var retry: () -> Void
+    var onConnectionChange: (ReaderTranslationService?) -> Void
     var showsLabel = false
     private var problem: ReaderTranslationProblem? {
         if case let .failed(problem) = status { return problem }
@@ -134,7 +138,7 @@ struct ReaderTranslationMenu: View {
                 Toggle(store.ui("双语阅读", "Bilingual reading"), isOn: $enabled)
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                ReaderTranslationOptions(manageConnections: openConnectionSettings)
+                ReaderTranslationOptions(manageConnections: openConnectionSettings, onConnectionChange: onConnectionChange)
                 if enabled {
                     switch status {
                     case .translating:
@@ -170,9 +174,12 @@ private struct ReaderTranslationOptions: View {
     @EnvironmentObject private var store: WorkspaceStore
     private var preferences = ReaderTranslationPreferences()
     var manageConnections: () -> Void
+    var onConnectionChange: (ReaderTranslationService?) -> Void
 
-    init(manageConnections: @escaping () -> Void) {
+    init(manageConnections: @escaping () -> Void,
+         onConnectionChange: @escaping (ReaderTranslationService?) -> Void) {
         self.manageConnections = manageConnections
+        self.onConnectionChange = onConnectionChange
     }
 
     var body: some View {
@@ -187,7 +194,13 @@ private struct ReaderTranslationOptions: View {
                 Text(Locale(identifier: id).localizedString(forIdentifier: id) ?? id).tag(id)
             }
         }
-        Picker(store.ui("连接", "Connection"), selection: preferences.connection) {
+        Picker(store.ui("连接", "Connection"), selection: Binding(
+            get: { preferences.connection.wrappedValue },
+            set: { id in
+                preferences.connection.wrappedValue = id
+                onConnectionChange(preferences.service(in: store, selectedConnection: id))
+            }
+        )) {
             Text(store.ui("当前模型连接", "Current model connection")).tag("")
             ForEach(store.agentCredentialProfiles) { profile in
                 Text(profile.name).tag(profile.id.uuidString)
@@ -220,7 +233,9 @@ struct ReaderTranslationProblemView: View {
                         .foregroundStyle(WeiBeiTheme.link)
                 }
             } else {
-                Button(store.ui("重试", "Try again"), action: retry)
+                Button(problem == .connectionChanged
+                    ? store.ui("用当前连接继续", "Continue with current connection")
+                    : store.ui("重试", "Try again"), action: retry)
                     .buttonStyle(.plain)
                     .foregroundStyle(WeiBeiTheme.link)
             }
@@ -231,6 +246,7 @@ struct ReaderTranslationProblemView: View {
 struct ReaderSelectionTranslationButton: View {
     @EnvironmentObject private var store: WorkspaceStore
     let selection: SelectionContext
+    private var preferences = ReaderTranslationPreferences()
 
     init(selection: SelectionContext) {
         self.selection = selection
@@ -241,7 +257,8 @@ struct ReaderSelectionTranslationButton: View {
             guard let item = store.selectedMaterialItem, item.id == selection.itemID,
                   let anchor = store.interaction.selectionAnchor else { return }
             store.interaction.readerSelectionTranslation = ReaderSelectionTranslationRequest(
-                revision: item.contentRevision, selection: selection, anchor: anchor
+                revision: item.contentRevision, selection: selection, anchor: anchor,
+                service: preferences.service(in: store)
             )
             store.dismissFloatingSelectionAgent()
         } label: {
@@ -257,7 +274,6 @@ struct ReaderSelectionTranslationAnnotation: View {
     @Environment(\.weiBeiTextScale) private var textScale
     let request: ReaderSelectionTranslationRequest
     let dismiss: () -> Void
-    private var preferences = ReaderTranslationPreferences()
     @State private var result: Result<String, ReaderTranslationProblem>?
     @State private var readerBounds: CGRect?
     @State private var scrollableResultBounds = CGRect.null
@@ -315,7 +331,7 @@ struct ReaderSelectionTranslationAnnotation: View {
             .accessibilityHidden(true)
         }
         .task {
-            guard let service = preferences.service(in: store) else {
+            guard let service = request.service else {
                 result = .failure(.missingConnection)
                 return
             }

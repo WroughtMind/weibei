@@ -23,6 +23,7 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
         in view: WKWebView,
         context: ReaderTranslationContext?,
         rootSelector: String,
+        snapshotImportedHTML: Bool,
         onStatus: @escaping (ReaderTranslationStatus) -> Void
     ) {
         self.onStatus = onStatus
@@ -36,7 +37,7 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
         publish(.idle)
         view.callAsyncJavaScript(
             Self.startScript,
-            arguments: ["token": token, "rootSelector": rootSelector],
+            arguments: ["token": token, "rootSelector": rootSelector, "snapshotImportedHTML": snapshotImportedHTML],
             in: nil,
             in: Self.world
         ) { [weak self] result in
@@ -145,16 +146,17 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
     // The shadow tree keeps translated text out of source search and selection ranges.
     static let startScript = #"""
     globalThis.weiBeiReaderTranslation?.stop();
-    const translationTag = 'weibei-reader-translation';
+    const translationSelector = '[data-weibei-reader-translation]';
     const slideSelector = '[data-slide-index]';
     const office = rootSelector === '#office-document';
     const blocks = 'p,h1,h2,h3,h4,h5,h6,li,dt,dd,figcaption,blockquote,td,th,caption'
-      + (office ? ',' + slideSelector : rootSelector === 'body' ? ',div' : '');
+      + (office ? ',' + slideSelector : rootSelector === 'body' ? ',div,main,article,section' : '');
     const excluded = 'nav,footer,aside:not(.office-note),pre,code,form,[hidden],[aria-hidden="true"],'
       + '[role="status"],[role="alert"],[data-weibei-annotation-ui]';
     const ids = new WeakMap();
     const slideText = new WeakMap();
     const translations = new Map();
+    const translationHosts = new WeakSet();
     const elements = new Map();
     const observed = new Set();
     const intersecting = new Set();
@@ -181,7 +183,7 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
       if (nestedList(element)) {
         return Array.from(element.childNodes).map(node => {
           if (node.nodeType === Node.TEXT_NODE) return node.textContent;
-          if (node instanceof HTMLElement && !node.matches('ul,ol,' + translationTag)) return node.innerText;
+          if (node instanceof HTMLElement && !node.matches('ul,ol,' + translationSelector)) return node.innerText;
           return '';
         }).join('').trim();
       }
@@ -196,6 +198,20 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
       return !Array.from(element.children).some(child =>
         !child.matches('ul,ol') && (child.matches(blocks) || child.querySelector(blocks)));
     }
+
+    function sourceBlocks() {
+      const root = document.querySelector(rootSelector);
+      if (!root) return [];
+      const paragraphs = Array.from(root.querySelectorAll(blocks)).filter(isParagraph);
+      if (!paragraphs.length && root.matches('body') && !root.querySelector(excluded)) return [root];
+      return paragraphs;
+    }
+
+    // An imported page can run its own scripts. Only translate the prose present
+    // when this reading session starts, even if the page later rewrites its DOM.
+    const approvedSource = snapshotImportedHTML
+      ? new WeakMap(sourceBlocks().map(element => [element, textOf(element)]))
+      : null;
 
     function assignID(element) {
       const id = ++nextID;
@@ -229,9 +245,7 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
     });
 
     function refresh() {
-      const root = document.querySelector(rootSelector);
-      const candidates = root ? Array.from(root.querySelectorAll(blocks)) : [];
-      const leafBlocks = new Set(candidates.filter(isParagraph));
+      const leafBlocks = new Set(sourceBlocks().filter(element => !approvedSource || approvedSource.has(element)));
       for (const element of observed) {
         if (leafBlocks.has(element)) continue;
         intersection.unobserve(element);
@@ -263,6 +277,7 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
         })
         .sort((a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
         .map(element => ({ id: ids.get(element), text: textOf(element) }))
+        .filter(paragraph => !approvedSource || approvedSource.get(elements.get(paragraph.id)) === paragraph.text)
         .filter(paragraph => /\p{L}/u.test(paragraph.text));
       const signature = JSON.stringify(paragraphs);
       if (signature === lastReport) return;
@@ -271,18 +286,23 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
     }
 
     const changes = new MutationObserver(records => {
+      let sourceChanged = false;
       for (const record of records) {
+        if (record.type === 'childList' && !record.removedNodes.length && record.addedNodes.length
+            && Array.from(record.addedNodes).every(node => translationHosts.has(node))) continue;
+        sourceChanged = true;
         const node = record.target;
         const element = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest(blocks);
         invalidateTranslation(element);
         for (const removed of record.removedNodes) {
-          if (removed.nodeName === translationTag.toUpperCase()) {
+          if (translationHosts.has(removed)) {
             for (const [original, entry] of translations) {
               if (entry.host === removed) invalidateTranslation(original);
             }
           }
         }
       }
+      if (!sourceChanged) return;
       needsRefresh = true;
       schedule();
     });
@@ -309,7 +329,9 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
           const element = elements.get(id);
           if (element?.isConnected && textOf(element) === source) {
             removeTranslation(element);
-            const host = document.createElement(translationTag);
+            const host = document.createElement('span');
+            host.setAttribute('data-weibei-reader-translation', '');
+            translationHosts.add(host);
             host.contentEditable = 'false';
             Object.assign(host.style, {
               color: 'inherit', opacity: '.8', fontSize: '.93em', fontWeight: 'normal',
@@ -322,7 +344,7 @@ final class ReaderWebTranslation: NSObject, WKScriptMessageHandler {
               host.style.contain = 'inline-size';
               host.style.paddingInline = 'min(4vw, 24px)';
               element.append(host);
-            } else if (element.matches('li,td,th,caption')) element.insertBefore(host, nestedList(element));
+            } else if (element.matches('li,td,th,caption,body')) element.insertBefore(host, nestedList(element));
             else element.after(host);
             applied.push(id);
           }

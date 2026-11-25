@@ -1713,7 +1713,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func updateTranslation(in view: WKWebView) {
             translation.update(in: view, context: isReady && !isEditable ? translationContext : nil,
-                               rootSelector: "#editor .ProseMirror", onStatus: onTranslationStatus)
+                               rootSelector: "#editor .ProseMirror", snapshotImportedHTML: false,
+                               onStatus: onTranslationStatus)
         }
 
         func updateStreamingMarkdown(_ text: String) {

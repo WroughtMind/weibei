@@ -30,6 +30,13 @@ public struct ReaderTranslationService: Equatable, Sendable {
         self.targetLanguage = targetLanguage
     }
 
+    public func usesSameConnection(as other: Self) -> Bool {
+        guard provider == other.provider, authMethod == other.authMethod else { return false }
+        if baseURL == other.baseURL { return true }
+        guard let endpoint = try? AgentProviderEndpoint(provider: provider, baseURL: baseURL) else { return false }
+        return endpoint == (try? AgentProviderEndpoint(provider: other.provider, baseURL: other.baseURL))
+    }
+
     public func translate(_ paragraphs: [String], onParagraph: ParagraphHandler? = nil) async throws -> [String] {
         try Task.checkCancellation()
         guard !model.isEmpty else { throw Failure.missingModel }
