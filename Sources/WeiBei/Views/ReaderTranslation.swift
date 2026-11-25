@@ -146,6 +146,7 @@ struct ReaderTranslationMenu: View {
             .weiBeiText(12)
             .padding(14)
             .frame(width: 300)
+            .environmentObject(store)
         }
     }
 
