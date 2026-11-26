@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {genuiMeasurementObserver} from './editor-probe-programs.mjs';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
 const source=readFileSync(new URL('../../Sources/WeiBeiWebEditorCheck/main.swift',import.meta.url),'utf8');
-const program=source.match(/private static let genuiMeasurementObserver = #"""([\s\S]*?)"""#/)[1];
+const program=genuiMeasurementObserver(source);
 function observe({text='WB514_START',throws=false}={}) {
   const rectangle={x:1,y:2,width:91.4,height:21};
   class Element { getBoundingClientRect() {return rectangle;} }
