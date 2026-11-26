@@ -6,9 +6,14 @@ struct ContextualContentPicker: View {
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     let kind: ContextualContentKind
     @State private var courseEntry: CourseProjectEntryPresentation?
-    @State private var search = ""
+    @State private var search: String
     @State private var searchFocused = false
     @State private var searchFocusRequest = 0
+
+    init(kind: ContextualContentKind, initialSearch: String = "") {
+        self.kind = kind
+        _search = State(initialValue: initialSearch)
+    }
 
     private struct Group: Identifiable {
         let course: Course?
@@ -40,80 +45,49 @@ struct ContextualContentPicker: View {
     var body: some View {
         GeometryReader { geometry in
             let groups = groups
-            let filtering = !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let libraryEmpty = !filtering && groups.allSatisfy { $0.items.isEmpty }
+            let trimmedQuery = search.trimmingCharacters(in: .whitespacesAndNewlines)
+            let filtering = !trimmedQuery.isEmpty
+            let hasAnyItems = store.allItems.contains { courseContextItemMatches($0, kind: kind) }
+            let isCompletelyEmpty = !filtering && !hasAnyItems && store.courses.isEmpty
+            let isCoursesOnlyEmpty = !filtering && !hasAnyItems && !store.courses.isEmpty
             let available = max(1, geometry.size.width - 40)
             let columns = max(1, min(store.courses.count + 1, Int((min(available, 1140) + 16) / 200)))
             let width = min(available, CGFloat(columns) * 220 + CGFloat(columns - 1) * 16)
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 7) {
-                        Image(systemName: "magnifyingglass")
-                            .weiBeiText(12)
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        WeiBeiSearchField(
-                            text: $search,
-                            prompt: store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags"),
-                            isFocused: $searchFocused,
-                            fontSize: 12,
-                            focusRequest: searchFocusRequest,
-                            focusesOnAppear: kind == .note && store.notePickerPresented,
-                            drawsChrome: false,
-                            chromeHeight: 28
-                        )
-                    }
-                    .padding(.horizontal, 9)
-                    .frame(width: min(width, 320), height: 30)
-                    .background(WeiBeiTheme.paperInset.opacity(0.22), in: RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius))
-                    .accessibilityIdentifier("contextual-content-filter")
-                    globalActions
-                    if filtering && groups.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(kind == .note
-                                 ? store.ui("没有找到匹配的笔记", "No matching notes")
-                                 : store.ui("没有找到匹配的文稿", "No matching documents"))
-                                .weiBeiText(13).foregroundStyle(WeiBeiTheme.secondaryInk)
-                            Button(store.ui("清除搜索", "Clear Search")) {
-                                search = ""
-                                searchFocusRequest += 1
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
-                            .accessibilityIdentifier("contextual-picker-clear-search")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        if libraryEmpty {
-                            HStack(spacing: 8) {
-                                Image(systemName: kind == .note ? "note.text" : "doc.text")
-                                    .accessibilityHidden(true)
+                if isCompletelyEmpty {
+                    completelyEmptyState(availableWidth: available)
+                        .frame(maxWidth: .infinity, minHeight: max(1, geometry.size.height))
+                } else {
+                    VStack(alignment: .leading, spacing: 16) {
+                        searchBar(width: width)
+                        if filtering && groups.isEmpty {
+                            emptySearchState(query: trimmedQuery)
+                        } else {
+                            globalActions
+                            if isCoursesOnlyEmpty {
                                 Text(kind == .note
                                      ? store.ui("还没有笔记", "No notes yet")
-                                     : store.ui("还没有可阅读的文稿", "No documents to read yet"))
-                                    .weiBeiText(13)
-                                if kind == .note {
-                                    Button(store.ui("新建笔记", "New Note")) {
-                                        store.createBlankNotebookNote(in: nil)
-                                    }
-                                    .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 28))
-                                }
+                                     : store.ui("还没有文稿", "No documents yet"))
+                                    .weiBeiText(12)
+                                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        CoursePickerColumns(columns: columns, spacing: 16) {
-                            ForEach(groups) { group in
-                                courseBlock(group, showsEmptyMessage: !libraryEmpty)
+                            CoursePickerColumns(columns: columns, spacing: 16) {
+                                ForEach(groups) { group in
+                                    courseBlock(group, showsEmptyMessage: !isCoursesOnlyEmpty)
+                                }
                             }
                         }
                     }
+                    .frame(width: width)
+                    // Animate discrete reflow; ordinary live resizing must keep tracking the pointer.
+                    .animation(reduceMotion ? nil : WeiBeiMotion.layout, value: columns)
+                    // Both pickers start below the same return-control band, regardless of pane height.
+                    .padding(.top, 48)
+                    .padding(.bottom, 32)
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(width: width)
-                // Animate discrete reflow; ordinary live resizing must keep tracking the pointer.
-                .animation(reduceMotion ? nil : WeiBeiMotion.layout, value: columns)
-                // Both pickers start below the same return-control band, regardless of pane height.
-                .padding(.top, 48)
-                .padding(.bottom, 32)
-                .frame(maxWidth: .infinity)
             }
         }
         .background(WeiBeiTheme.paper)
@@ -126,6 +100,139 @@ struct ContextualContentPicker: View {
             ).environmentObject(store)
         }
         .accessibilityIdentifier(kind == .note ? "contextual-note-picker" : "contextual-material-picker")
+    }
+
+    private func searchBar(width: CGFloat) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .weiBeiText(12)
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            WeiBeiSearchField(
+                text: $search,
+                prompt: store.ui("搜索名称、文件名或标签", "Search titles, filenames or tags"),
+                isFocused: $searchFocused,
+                fontSize: 12,
+                focusRequest: searchFocusRequest,
+                focusesOnAppear: kind == .note && store.notePickerPresented,
+                drawsChrome: false,
+                chromeHeight: 28,
+                onEscape: {
+                    guard !search.isEmpty else { return }
+                    clearSearchAndRefocus()
+                }
+            )
+            if !search.isEmpty {
+                Button(action: clearSearchAndRefocus) {
+                    Image(systemName: "xmark.circle.fill")
+                        .weiBeiText(12)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(store.ui("清除搜索", "Clear search"))
+            }
+        }
+        .padding(.horizontal, 9)
+        .frame(width: min(width, 320), height: 30)
+        .background(WeiBeiTheme.paperInset.opacity(0.22), in: RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius))
+        .accessibilityIdentifier("contextual-content-filter")
+    }
+
+    private func completelyEmptyState(availableWidth: CGFloat) -> some View {
+        let compact = availableWidth < 260
+        return VStack(spacing: 0) {
+            Spacer(minLength: 56)
+            VStack(spacing: 12) {
+                Image(systemName: kind == .note ? "note.text" : "doc.text")
+                    .font(.system(size: 26, weight: .light))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .accessibilityHidden(true)
+                Text(kind == .note
+                     ? store.ui("还没有笔记", "No notes yet")
+                     : store.ui("还没有文稿", "No documents yet"))
+                    .weiBeiText(16, weight: .semibold)
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .multilineTextAlignment(.center)
+                Text(kind == .note
+                     ? store.ui("拖入 Markdown，或直接新建。", "Create a note or drop Markdown files.")
+                     : store.ui("支持 PDF、课件、HTML 与文本。", "PDF, slides, HTML, and text."))
+                    .weiBeiText(12.5)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineSpacing(3)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 280)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                SwiftUI.Group {
+                    if compact {
+                        VStack(spacing: 8) { emptyPrimaryButtons }
+                    } else {
+                        HStack(spacing: 10) { emptyPrimaryButtons }
+                    }
+                }
+                .padding(.top, 6)
+
+                if kind == .note {
+                    Button(store.ui("新建课程", "New Course")) {
+                        courseEntry = CourseProjectEntryPresentation()
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 12, height: 26, neutralHoverWhenInactive: true, idleOpacity: 0))
+                    .padding(.top, 2)
+                }
+            }
+            .padding(.horizontal, 24)
+            .accessibilityIdentifier("contextual-picker-empty-library")
+            Spacer(minLength: 56)
+            Spacer(minLength: 56)
+        }
+    }
+
+    @ViewBuilder
+    private var emptyPrimaryButtons: some View {
+        if kind == .note {
+            Button(store.ui("新建笔记", "New Note")) {
+                store.createBlankNotebookNote(in: nil)
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            Button(store.ui("导入…", "Import…")) {
+                importFiles(into: nil)
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+        } else {
+            Button(store.ui("导入文稿…", "Import Documents…")) {
+                importFiles(into: nil)
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
+            Button(store.ui("新建课程", "New Course")) {
+                courseEntry = CourseProjectEntryPresentation()
+            }
+            .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+        }
+    }
+
+    private func emptySearchState(query: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .accessibilityHidden(true)
+            Text(store.ui("找不到「\(query)」", "No results for \"\(query)\""))
+                .weiBeiText(14, weight: .medium)
+                .foregroundStyle(WeiBeiTheme.ink)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(store.ui("清除搜索", "Clear Search"), action: clearSearchAndRefocus)
+                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
+                .accessibilityIdentifier("contextual-picker-clear-search")
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: 300)
+        .padding(.top, 56)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func clearSearchAndRefocus() {
+        search = ""
+        searchFocusRequest += 1
     }
 
     private var commonTitle: String {
