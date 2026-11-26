@@ -264,7 +264,6 @@ enum NativeScenarioPair {
             "note": unavailable("weibei_note_proposal"),
             "relation": unavailable("weibei_relation_proposal"),
             "profile": unavailable("weibei_course_profile_update"),
-            "backend": reply.backend.rawValue,
         ]
     }
 
@@ -277,7 +276,6 @@ enum NativeScenarioPair {
         let task = Task {
             try await runtime.respond(
                 to: StudyAgentRequest(
-                    purpose: .conversation,
                     question: "请详细解释",
                     materialTitle: "",
                     materialText: "",
@@ -337,7 +335,6 @@ enum NativeScenarioPair {
         }
         return try await runtime.respond(
             to: StudyAgentRequest(
-                purpose: .conversation,
                 question: question,
                 materialTitle: "利率课程",
                 materialText: "利率是资金使用价格的表达。",

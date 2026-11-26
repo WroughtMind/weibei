@@ -8,14 +8,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
 
-enum CourseProjectEntryIntent: Equatable {
-    case create
-    case adopt
-}
-
 struct CourseProjectEntryPresentation: Identifiable, Equatable {
     let id = UUID()
-    let intent: CourseProjectEntryIntent
 }
 
 struct CourseManagementPresentation: Identifiable, Equatable {
@@ -307,32 +301,25 @@ struct CourseProjectEntrySheet: View {
     let openCourse: (UUID) -> Void
     let allowsInitialImport: Bool
 
-    @State private var intent: CourseProjectEntryIntent
     @State private var title = ""
-    @State private var selectedFolder: URL?
     @State private var selectedImportURLs: [URL] = []
     @State private var configuredLibraryThisTime = false
     @State private var isWorking = false
     @State private var errorMessage: String?
-    @State private var rebindProposal: CourseProjectRebindProposal?
     @FocusState private var titleFocused: Bool
 
     init(
-        initialIntent: CourseProjectEntryIntent = .create,
         cancel: @escaping () -> Void,
         openCourse: @escaping (UUID) -> Void,
         allowsInitialImport: Bool = true
     ) {
-        _intent = State(initialValue: initialIntent)
         self.cancel = cancel
         self.openCourse = openCourse
         self.allowsInitialImport = allowsInitialImport
     }
 
     private var needsLibrary: Bool {
-        intent == .create
-            && store.courseLibraryRootURL == nil
-            && !configuredLibraryThisTime
+        store.courseLibraryRootURL == nil && !configuredLibraryThisTime
     }
 
     private var libraryNeedsReauthorization: Bool {
@@ -364,13 +351,7 @@ struct CourseProjectEntrySheet: View {
                 libraryPicker
             } else {
                 courseTitleField
-                if intent == .adopt, let libraryPath = store.courseLibraryRootURL?.path {
-                    pathLine(
-                        label: store.ui("魏碑资料库", "WeiBei Library"),
-                        path: libraryPath
-                    )
-                }
-                if intent == .create && allowsInitialImport {
+                if allowsInitialImport {
                     importPicker
                 }
             }
@@ -401,37 +382,18 @@ struct CourseProjectEntrySheet: View {
         .interactiveDismissDisabled(isWorking)
         .modifier(UserOperationRiskPresenter(choices: store.userOperationRisks, context: .courseEntry))
         .onAppear(perform: updateFocus)
-        .onChange(of: intent) { _, _ in updateFocus() }
-        .onChange(of: selectedFolder) { _, _ in updateFocus() }
     }
 
     private var heading: String {
-        if rebindProposal != nil {
-            return store.ui(
-                "重新绑定这门课程？",
-                "Reconnect This Course?"
-            )
-        }
         if needsLibrary {
             return libraryNeedsReauthorization
                 ? store.ui("重新选择资料库", "Re-select Library")
                 : store.ui("选择魏碑资料库", "Choose WeiBei Library")
         }
-        switch intent {
-        case .create:
-            return store.ui("新建课程", "Create Course")
-        case .adopt:
-            return store.ui("纳入已有课程文件夹", "Add Existing Course Folder")
-        }
+        return store.ui("新建课程", "Create Course")
     }
 
     private var detail: String? {
-        if rebindProposal != nil {
-            return store.ui(
-                "魏碑认出了同一门课程，原文件夹当前无法访问。确认后会重新连接所选文件夹，读取其中的课程状态并扫描实际资料；本机未落盘草稿会保留。",
-                "WeiBei recognized the same course, and its original folder is unavailable. Confirm to reconnect the selected folder, read its course state, and scan its files. Unsaved local drafts will be preserved."
-            )
-        }
         if needsLibrary {
             if libraryNeedsReauthorization {
                 return store.ui(
@@ -444,15 +406,7 @@ struct CourseProjectEntrySheet: View {
                 "Choose a local WeiBei Library. Each new course will get its own real folder inside it."
             )
         }
-        switch intent {
-        case .create:
-            return nil
-        case .adopt:
-            return store.ui(
-                "原地登记一个已有文件夹为课程；不会复制、移动或重排其中的可见内容。",
-                "Register an existing folder in place without copying, moving, or rearranging its visible contents."
-            )
-        }
+        return nil
     }
 
     private var libraryPicker: some View {
@@ -485,40 +439,6 @@ struct CourseProjectEntrySheet: View {
         )
     }
 
-    @ViewBuilder
-    private var adoptionPicker: some View {
-        if let rebindProposal {
-            pathLine(
-                label: store.ui(
-                    "新的课程文件夹",
-                    "New course folder"
-                ),
-                path: rebindProposal.candidateRoot.path
-            )
-            Label(
-                store.ui(
-                    "只有确认后才会改绑；取消不会修改课程或文件夹。",
-                    "Nothing changes until you confirm. Cancel leaves the course and folder untouched."
-                ),
-                systemImage: "arrow.triangle.2.circlepath"
-            )
-            .weiBeiText(12)
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
-            .fixedSize(horizontal: false, vertical: true)
-        } else if let selectedFolder {
-            pathLine(
-                label: store.ui("课程文件夹", "Course folder"),
-                path: selectedFolder.path
-            )
-            courseTitleField
-        } else {
-            Button(store.ui("选择课程文件夹…", "Choose Course Folder…"), action: chooseAdoptionFolder)
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                .keyboardShortcut(.defaultAction)
-                .disabled(isWorking)
-        }
-    }
-
     private var courseTitleField: some View {
         TextField(store.ui("课程名", "Course title"), text: $title)
             .textFieldStyle(.plain)
@@ -526,7 +446,10 @@ struct CourseProjectEntrySheet: View {
             .weiBeiText(13)
             .foregroundColor(WeiBeiTheme.ink)
             .weibeiInputSurface(active: titleFocused, height: 32)
-            .onSubmit(submitCurrentIntent)
+            .onSubmit {
+                guard !needsLibrary, !cleanedTitle.isEmpty, !isWorking else { return }
+                createCourse()
+            }
             .disabled(isWorking)
             .accessibilityLabel(Text(store.ui("课程名称", "Course title")))
     }
@@ -591,16 +514,6 @@ struct CourseProjectEntrySheet: View {
     @ViewBuilder
     private var actionBar: some View {
         HStack(spacing: 8) {
-            if rebindProposal != nil {
-                Button(store.ui("重新选择", "Choose Again")) {
-                    rebindProposal = nil
-                    selectedFolder = nil
-                    errorMessage = nil
-                }
-                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .secondary))
-                .disabled(isWorking)
-            }
-
             Spacer()
 
             if isWorking {
@@ -614,18 +527,7 @@ struct CourseProjectEntrySheet: View {
                 .keyboardShortcut(.cancelAction)
                 .disabled(isWorking)
 
-            if rebindProposal != nil {
-                Button(
-                    store.ui(
-                        "确认重新绑定",
-                        "Confirm Reconnect"
-                    ),
-                    action: confirmRebind
-                )
-                .buttonStyle(WeiBeiDialogButtonStyle(prominence: .primary))
-                .keyboardShortcut(.defaultAction)
-                .disabled(isWorking)
-            } else if !needsLibrary {
+            if !needsLibrary {
                 Button(
                     selectedImportURLs.isEmpty
                         ? store.ui("创建课程", "Create Course")
@@ -688,32 +590,6 @@ struct CourseProjectEntrySheet: View {
         }
     }
 
-    private func chooseAdoptionFolder() { Task { await chooseAdoptionFolderWithPicker() } }
-
-    private func chooseAdoptionFolderWithPicker() async {
-#if targetEnvironment(macCatalyst)
-        let urls = await WorkspaceFileDialog.pick(title: store.ui("选择课程文件夹", "Choose Course Folder"), types: [.folder], multiple: false)
-        guard let url = urls.first else { return }
-#else
-        let panel = NSOpenPanel()
-        panel.title = store.ui("选择课程文件夹", "Choose Course Folder")
-        panel.message = store.ui(
-            "魏碑会原地纳入这个文件夹，不移动其中的可见内容。",
-            "WeiBei will register this folder in place without moving visible contents."
-        )
-        panel.prompt = store.ui("选择", "Choose")
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-#endif
-        intent = .adopt
-        selectedFolder = url.standardizedFileURL
-        title = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
-        errorMessage = nil
-        rebindProposal = nil
-    }
-
     private func chooseImportContent() { Task { await chooseImportContentWithPicker() } }
 
     private func chooseImportContentWithPicker() async {
@@ -744,22 +620,6 @@ struct CourseProjectEntrySheet: View {
 
     }
 
-    private func submitCurrentIntent() {
-        if rebindProposal != nil {
-            confirmRebind()
-            return
-        }
-        guard !cleanedTitle.isEmpty else { return }
-        switch intent {
-        case .create:
-            guard !needsLibrary else { return }
-            createCourse()
-        case .adopt:
-            guard selectedFolder != nil else { return }
-            adoptCourse()
-        }
-    }
-
     private func createCourse() {
         perform(
             failureMessageFor: { error in
@@ -785,47 +645,6 @@ struct CourseProjectEntrySheet: View {
                     courseID: courseID
                 )
             }
-        }
-    }
-
-    private func adoptCourse() {
-        guard let selectedFolder else { return }
-        perform(
-            failureMessage: store.ui(
-                "课程文件夹没有确认纳入魏碑；所选文件夹仍由你保留。请确认文件夹可访问后重试。",
-                "The course folder was not confirmed as added to WeiBei. You still retain the selected folder. Make sure it is accessible and try again."
-            ),
-            operation: "adopt_course_folder",
-            path: selectedFolder
-        ) {
-            let outcome = try await store.adoptCourseFolderOrProposeRebindAsync(
-                at: selectedFolder,
-                title: cleanedTitle
-            )
-            switch outcome {
-            case .opened(let courseID):
-                openCourse(courseID)
-            case .requiresRebind(let proposal):
-                rebindProposal = proposal
-                title = proposal.courseTitle
-            }
-        }
-    }
-
-    private func confirmRebind() {
-        guard let rebindProposal else { return }
-        perform(
-            failureMessage: store.ui(
-                "课程没有确认重新连接，原课程记录仍保留。请确认所选文件夹可访问后重试。",
-                "The course was not confirmed as reconnected, and its original record remains. Make sure the selected folder is accessible and try again."
-            ),
-            operation: "rebind_course_folder"
-        ) {
-            let courseID = try await store.confirmCourseProjectRebindAsync(
-                rebindProposal
-            )
-            self.rebindProposal = nil
-            openCourse(courseID)
         }
     }
 
@@ -892,7 +711,6 @@ struct CourseProjectEntrySheet: View {
 
     private func updateFocus() {
         titleFocused = !needsLibrary
-            && (intent == .create || selectedFolder != nil)
     }
 }
 
@@ -974,52 +792,6 @@ struct CourseWorkspaceRow: View {
         if prominence == .linked { return WeiBeiTheme.accentSoft.opacity(0.28) }
         if hovering { return WeiBeiTheme.paperInset.opacity(0.18) }
         return .clear
-    }
-}
-
-struct RelationSelectionRow: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    let item: StudyItem
-    let checked: Bool
-    let detail: String
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 11) {
-                Image(systemName: checked ? "checkmark.square.fill" : "square")
-                    .weiBeiText(15, weight: .medium)
-                    .foregroundStyle(checked ? WeiBeiTheme.accent : WeiBeiTheme.tertiaryInk)
-                    .frame(width: 20)
-                Image(systemName: item.kind.systemImage)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .frame(width: 18)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(store.displayTitle(for: item))
-                        .weiBeiText(13, weight: .medium)
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .lineLimit(1)
-                    Text(detail)
-                        .weiBeiText(10.5)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Text(item.isNotebookNote
-                     ? store.ui("笔记", "Note")
-                     : item.kind.label(language: store.interfaceLanguage))
-                    .weiBeiText(10.5, weight: .medium)
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 48)
-            .contentShape(Rectangle())
-            .background(hovering ? WeiBeiTheme.paperInset.opacity(0.18) : Color.clear)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .accessibilityValue(Text(checked ? store.ui("已关联", "Linked") : store.ui("未关联", "Not linked")))
     }
 }
 

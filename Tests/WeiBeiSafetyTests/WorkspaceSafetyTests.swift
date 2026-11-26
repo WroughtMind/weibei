@@ -424,7 +424,6 @@ final class WorkspaceSafetyTests: XCTestCase {
             count: 120
         )
 
-        store.layout = .documentAgentNotes
         store.showAgent = true
         store.updateSelection(selection, source: .document, ownerTitle: "课堂原文")
 
@@ -922,7 +921,7 @@ final class WorkspaceSafetyTests: XCTestCase {
                 defaults.removeObject(forKey: AppShortcutCatalog.defaultsKey)
             }
         }
-        let conflict = AppShortcutID.threePaneWorkspace.defaultChord
+        let conflict = AppShortcutID.newConversation.defaultChord
         defaults.set(
             try JSONEncoder().encode([AppShortcutID.courseIndex.rawValue: conflict]),
             forKey: AppShortcutCatalog.defaultsKey
@@ -932,7 +931,20 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertEqual(loaded[.courseIndex], conflict)
         XCTAssertNil(AppShortcutCatalog.action(matching: conflict, overrides: loaded))
         XCTAssertNil(AppShortcutCatalog.executableChord(for: .courseIndex, overrides: loaded))
-        XCTAssertNil(AppShortcutCatalog.executableChord(for: .threePaneWorkspace, overrides: loaded))
+        XCTAssertNil(AppShortcutCatalog.executableChord(for: .newConversation, overrides: loaded))
+    }
+
+    @MainActor
+    func testOpeningWorkspacePreservesMarkdownDraftLineBreaks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let markdown = "前文\n- <br />示例"
+        let snapshot = PersistedWorkspace(notesByItemID: ["draft": markdown])
+        try JSONEncoder().encode(snapshot).write(to: root.appendingPathComponent("workspace.json"))
+
+        let store = WorkspaceStore(workspaceDirectory: root, startsCourseFileMaintenance: false)
+        XCTAssertEqual(store.notesByItemID["draft"], markdown)
     }
 
     @MainActor
@@ -951,7 +963,7 @@ final class WorkspaceSafetyTests: XCTestCase {
         store.showReader = false
         store.showAgent = false
         store.showNotes = true
-        store.showRightPane = true
+        store.paneState.setDocumentPanes(reader: store.showReader, agent: true, notes: true)
         store.focusedPane = .agent
         store.focusRequest += 1
         store.showDocumentSearch = true
@@ -969,9 +981,9 @@ final class WorkspaceSafetyTests: XCTestCase {
         XCTAssertEqual(workspaceChanges, 0, "pane/interaction chrome must not forward to WorkspaceStore")
         XCTAssertGreaterThan(paneChanges, 0)
         XCTAssertGreaterThan(interactionChanges, 0)
-        // showRightPane batches notes+agent into one publish (not two).
+        // A multi-pane update batches notes and agent into one publish (not two).
         let beforeRight = paneChanges
-        store.showRightPane = false
+        store.paneState.setDocumentPanes(reader: store.showReader, agent: false, notes: false)
         XCTAssertEqual(paneChanges, beforeRight + 1)
         withExtendedLifetime((workspaceObservation, paneObservation, interactionObservation)) {}
     }

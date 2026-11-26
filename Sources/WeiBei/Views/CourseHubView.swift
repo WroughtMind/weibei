@@ -10,7 +10,6 @@ struct CourseHubView: View {
     @Binding var selectedNoteID: String?
     @Binding var selectedSessionID: UUID?
     let isCompact: Bool
-    let openRelations: () -> Void
     let openRecords: () -> Void
     let importMaterials: () -> Void
     let importNotes: () -> Void
@@ -178,7 +177,7 @@ struct CourseHubView: View {
         }
         .sheet(item: $courseEntryPresentation) { presentation in
             CourseProjectEntrySheet(
-                initialIntent: presentation.intent,
+
                 cancel: { courseEntryPresentation = nil },
                 openCourse: { courseID in
                     courseEntryPresentation = nil
@@ -293,7 +292,7 @@ struct CourseHubView: View {
     private var courseCreationActions: some View {
         HStack(spacing: 10) {
             Button(store.ui("新建课程", "Create course")) {
-                courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
+                courseEntryPresentation = CourseProjectEntryPresentation()
             }
             .buttonStyle(WeiBeiTextActionButtonStyle(active: store.courses.isEmpty))
         }

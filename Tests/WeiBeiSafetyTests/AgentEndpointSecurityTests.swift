@@ -205,7 +205,7 @@ final class AgentEndpointSecurityTests: XCTestCase {
                 let answered = expectation(description: "The model can answer without the unsafe bookkeeping directory")
                 store.selfCheckAgentResponder = { _ in
                     answered.fulfill()
-                    return StudyAgentReply(text: "回答", backend: .native)
+                    return StudyAgentReply(text: "回答")
                 }
                 XCTAssertNotNil(store.createStudySession(courseID: nil))
                 let rejection = store.askAgent(questionOverride: "解释这段材料")

@@ -477,7 +477,7 @@ final class AgentConnectionCreationTests: XCTestCase {
         store.selfCheckAgentResponder = { _ in
             started.fulfill()
             try await Task.sleep(nanoseconds: 60_000_000_000)
-            return StudyAgentReply(text: "Synthetic response", backend: .native)
+            return StudyAgentReply(text: "Synthetic response")
         }
         defer { store.selfCheckAgentResponder = nil; store.cancelAllAgentRequests() }
         let session = try XCTUnwrap(store.createStudySession(courseID: nil))

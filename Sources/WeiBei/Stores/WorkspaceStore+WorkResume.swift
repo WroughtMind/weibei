@@ -19,7 +19,6 @@ extension WorkspaceStore {
             noteID: activeNoteItem?.id,
             chatID: hasChat ? activeStudySessionID : nil,
             draft: draft,
-            layout: layout,
             order: normalizedThreePaneOrder,
             reader: showReader,
             notes: showNotes,
@@ -42,7 +41,6 @@ extension WorkspaceStore {
                 agentDraft = point.draft
                 pendingComposerDraft = point.draft.isEmpty ? nil : point.draft
             }
-            layout = point.layout
             threePaneOrder = point.order
             showReader = point.reader
             showNotes = point.notes

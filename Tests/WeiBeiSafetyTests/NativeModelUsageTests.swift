@@ -12,7 +12,7 @@ final class NativeModelUsageTests: XCTestCase {
             sessionTitleHandler: { _ in title.fulfill() }
         )
         let request = StudyAgentRequest(
-            purpose: .conversation, question: "继续解释", materialTitle: "", materialText: "",
+            question: "继续解释", materialTitle: "", materialText: "",
             noteTitle: "", noteText: "", projectScope: .init(kind: .global, chatID: "test"),
             contextRevision: "revision-to-preserve"
         )
@@ -40,7 +40,7 @@ final class NativeModelUsageTests: XCTestCase {
         let attributes = try FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent("usage.jsonl").path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
         let child = root.appendingPathComponent("NativeAgent/Ledgers/fork/ledger.jsonl")
-        _ = try await ledger.forkPrefix(upToTurn: 1, to: child)
+        try NativeAgentLedger.forkCompletedHistory(from: folder.appendingPathComponent("ledger.jsonl"), to: child)
         XCTAssertFalse(FileManager.default.fileExists(atPath: child.deletingLastPathComponent().appendingPathComponent("usage.jsonl").path))
     }
 

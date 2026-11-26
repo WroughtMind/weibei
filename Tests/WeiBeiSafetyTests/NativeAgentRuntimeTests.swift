@@ -227,7 +227,9 @@ final class NativeAgentRuntimeTests: XCTestCase {
             _ = try await parent.append { NativeSessionEvent(type: .userMessage, seq: $0, timeMS: $1, turn: turn, text: "主问题\(turn)") }
             _ = try await parent.append { NativeSessionEvent(type: .assistantMessage, seq: $0, timeMS: $1, turn: turn, text: "主回答\(turn)") }
             try await parent.closeTurn(turn: turn, reason: .completed)
-            let prefix = try await parent.forkPrefix(upToTurn: turn, to: ledgerRoot.appendingPathComponent("prefix-\(turn)/ledger.jsonl"))
+            let prefixURL = ledgerRoot.appendingPathComponent("prefix-\(turn)/ledger.jsonl")
+            try NativeAgentLedger.forkCompletedHistory(from: parentURL, to: prefixURL)
+            let prefix = try NativeAgentLedger(fileURL: prefixURL)
             let inherited = await prefix.deriveMessages()
             XCTAssertEqual(inherited.map(\.content), (1...turn).flatMap { ["主问题\($0)", "主回答\($0)"] })
         }
@@ -277,7 +279,7 @@ final class NativeAgentRuntimeTests: XCTestCase {
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let recorder = WorkspaceSearchRecorder()
         let context = NativeToolExecutionContext(
-            request: StudyAgentRequest(purpose: .conversation, question: "读取", materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "read"),
+            request: StudyAgentRequest(question: "读取", materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "read"),
             hostToolHandler: { request in
                 await recorder.record(request)
                 return StudyAgentHostToolResult(query: "", items: [])
@@ -371,7 +373,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
 
         let result = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
-                purpose: .conversation,
                 question: "第二问",
                 materialTitle: "",
                 materialText: "",
@@ -1412,7 +1413,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         )
         let firstResult = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
-                purpose: .conversation,
                 question: "继续解释",
                 materialTitle: "",
                 materialText: "",
@@ -1432,7 +1432,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         do {
             _ = try await NativeAgentLoop().run(
                 request: StudyAgentRequest(
-                    purpose: .conversation,
                     question: "继续追问",
                     materialTitle: "",
                     materialText: "",
@@ -1528,7 +1527,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let registry = NativeToolRegistry()
         await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil)
         let request = StudyAgentRequest(
-            purpose: .conversation,
             question: "hello",
             materialTitle: "",
             materialText: "",
@@ -1767,7 +1765,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         ])
         let loop = NativeAgentLoop()
         let request = StudyAgentRequest(
-            purpose: .conversation,
             question: "利率是什么",
             materialTitle: "",
             materialText: "",
@@ -1805,7 +1802,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let adapter = LongToolRunMockLLMAdapter(toolStepCount: 13)
         let loop = NativeAgentLoop()
         let request = StudyAgentRequest(
-            purpose: .conversation,
             question: "继续查利率",
             materialTitle: "",
             materialText: "",
@@ -1848,7 +1844,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
             }
         )
         let request = StudyAgentRequest(
-            purpose: .conversation,
             question: question,
             materialTitle: "",
             materialText: "",
@@ -1879,7 +1874,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let opened = WebOpenRecorder()
         _ = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
-                purpose: .conversation,
                 question: "搜索后打开结果",
                 materialTitle: "",
                 materialText: "",
@@ -1914,7 +1908,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let opened = WebOpenRecorder()
         _ = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
-                purpose: .conversation,
                 question: "搜索后沿页面链接核对",
                 materialTitle: "",
                 materialText: "",
@@ -2077,7 +2070,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
             ),
             context: NativeToolExecutionContext(
                 request: StudyAgentRequest(
-                    purpose: .conversation,
                     question: "我笔记里写过利率吗",
                     materialTitle: "",
                     materialText: "",
@@ -2120,7 +2112,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
             ),
             context: NativeToolExecutionContext(
                 request: StudyAgentRequest(
-                    purpose: .conversation,
                     question: "我所有笔记里写过利率吗",
                     materialTitle: "",
                     materialText: "",
@@ -2192,7 +2183,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         )
         let first = try await runtime.respond(
             to: StudyAgentRequest(
-                purpose: .conversation,
                 question: "请帮我解释利率为什么变化",
                 materialTitle: "",
                 materialText: "",
@@ -2209,7 +2199,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
 
         _ = try await runtime.respond(
             to: StudyAgentRequest(
-                purpose: .conversation,
                 question: "再举个例子",
                 materialTitle: "",
                 materialText: "",
@@ -2243,7 +2232,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let capture = RequestCapture()
         _ = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
-                purpose: .conversation,
                 question: "这段什么意思",
                 materialTitle: "利率讲义",
                 materialText: "",
@@ -2300,7 +2288,6 @@ final class NativeAgentRuntimeTests: XCTestCase {
         let adapter = VisualAssetLoopAdapter()
         _ = try await NativeAgentLoop().run(
             request: StudyAgentRequest(
-                purpose: .conversation,
                 question: "图里有什么",
                 materialTitle: "示意图",
                 materialText: "",
@@ -2761,7 +2748,6 @@ private actor StateUpdateCapture {
 
 private func testRequest() -> StudyAgentRequest {
     StudyAgentRequest(
-        purpose: .conversation,
         question: "测试工具恢复",
         materialTitle: "",
         materialText: "",

@@ -1,15 +1,5 @@
 import Foundation
 
-public enum StudyAgentPurpose: String, Codable, Sendable {
-    case conversation
-}
-
-public enum StudyAgentAnswerFormPolicy: String, Codable, Equatable, Sendable {
-    case automatic
-    case textOnly
-    case partialRichAllowed
-}
-
 public enum StudyAgentCurrentTurnEvidence {
     public static func matches(_ evidence: String, question: String) -> Bool {
         guard let statement = statement(in: evidence), statement.count >= 2 else { return false }
@@ -570,8 +560,6 @@ public struct StudyAgentRequest: Sendable {
     public var reasoningEffort: String?
     public var id: UUID
     public var reusingLastUserMessage: Bool
-    public var purpose: StudyAgentPurpose
-    public var answerFormPolicy: StudyAgentAnswerFormPolicy
     public var question: String
     public var materialTitle: String
     public var materialText: String
@@ -598,9 +586,7 @@ public struct StudyAgentRequest: Sendable {
 
     public init(
         id: UUID = UUID(),
-        purpose: StudyAgentPurpose,
         reusingLastUserMessage: Bool = false,
-        answerFormPolicy: StudyAgentAnswerFormPolicy = .automatic,
         question: String,
         materialTitle: String,
         materialText: String,
@@ -630,8 +616,6 @@ public struct StudyAgentRequest: Sendable {
         self.reasoningEffort = reasoningEffort
         self.id = id
         self.reusingLastUserMessage = reusingLastUserMessage
-        self.purpose = purpose
-        self.answerFormPolicy = answerFormPolicy
         self.question = question
         self.materialTitle = materialTitle
         self.materialText = materialText
@@ -835,7 +819,6 @@ public struct StudyAgentLoadedSkill: Codable, Equatable, Sendable {
 public struct StudyAgentReply: Equatable, Sendable {
     public var text: String
     public var contentBlocks: [AgentMessageContentBlock]
-    public var backend: StudyAgentBackend
     public var sources: [AgentReplySource]
     public var appliedMemoryUpdate: AgentReplyMemoryUpdate?
     public var appliedProfileUpdate: AgentReplyProfileUpdate?
@@ -846,7 +829,6 @@ public struct StudyAgentReply: Equatable, Sendable {
     public init(
         text: String,
         contentBlocks: [AgentMessageContentBlock] = [],
-        backend: StudyAgentBackend,
         sources: [AgentReplySource] = [],
         appliedMemoryUpdate: AgentReplyMemoryUpdate? = nil,
         appliedProfileUpdate: AgentReplyProfileUpdate? = nil,
@@ -856,7 +838,6 @@ public struct StudyAgentReply: Equatable, Sendable {
     ) {
         self.text = text
         self.contentBlocks = contentBlocks
-        self.backend = backend
         self.sources = sources
         self.appliedMemoryUpdate = appliedMemoryUpdate
         self.appliedProfileUpdate = appliedProfileUpdate

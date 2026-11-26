@@ -267,11 +267,6 @@ struct CourseTrashReceiptCleanup: Sendable {
     fileprivate let transactionDirectoryIdentity: ImportedFileIdentity
 }
 
-struct CourseDirectorySearchResult: Sendable {
-    var url: URL?
-    var ranOnMainThread: Bool
-}
-
 enum CoursePortableExportError: LocalizedError {
     case unstableCourseState
     case invalidSourceEntry(path: String, reason: String)
@@ -1626,54 +1621,6 @@ actor CourseProjectFileWorker {
         at url: URL
     ) throws -> (snapshot: CourseFileSnapshot, ranOnMainThread: Bool) {
         (try Self.snapshotFile(at: url), Thread.isMainThread)
-    }
-
-    func findDirectory(
-        with identity: ImportedFileIdentity,
-        inside libraryRoot: URL
-    ) -> CourseDirectorySearchResult {
-        let ranOnMainThread = Thread.isMainThread
-        let keys: Set<URLResourceKey> = [
-            .isDirectoryKey,
-            .isSymbolicLinkKey,
-        ]
-        guard let enumerator = fileManager.enumerator(
-            at: libraryRoot,
-            includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles],
-            errorHandler: { _, _ in true }
-        ) else {
-            return CourseDirectorySearchResult(
-                url: nil,
-                ranOnMainThread: ranOnMainThread
-            )
-        }
-        // S6-6：跟随符号链接目录（解析后比对身份），canonical 路径防环。
-        var visitedCanonicalPaths = Set<String>()
-        for case let candidate as URL in enumerator {
-            let values = try? candidate.resourceValues(forKeys: keys)
-            guard values?.isDirectory == true else { continue }
-            let canonical = candidate.resolvingSymlinksInPath()
-                .standardizedFileURL
-            if visitedCanonicalPaths.contains(canonical.path) {
-                enumerator.skipDescendants()
-                continue
-            }
-            visitedCanonicalPaths.insert(canonical.path)
-            if values?.isSymbolicLink == true {
-                enumerator.skipDescendants()
-            }
-            if Self.identity(at: canonical) == identity {
-                return CourseDirectorySearchResult(
-                    url: canonical,
-                    ranOnMainThread: ranOnMainThread
-                )
-            }
-        }
-        return CourseDirectorySearchResult(
-            url: nil,
-            ranOnMainThread: ranOnMainThread
-        )
     }
 
     func adoptionSnapshot(
@@ -5392,10 +5339,7 @@ extension CourseProjectFileWorker {
                         inside: libraryRoot
                     )
                 }
-            },
-            course.sourceRootPath.map {
-                URL(fileURLWithPath: $0, isDirectory: true)
-            },
+            }
         ].compactMap { $0 }
         let parentPaths = Set(originalCandidates.map {
             $0.deletingLastPathComponent().standardizedFileURL.path

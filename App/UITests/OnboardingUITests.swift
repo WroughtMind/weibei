@@ -170,6 +170,7 @@ final class OnboardingUITests: XCTestCase {
                 start.press(forDuration: 0.1, thenDragTo: end)
             case "save-pdf":
                 let folder = try XCTUnwrap(request["value"])
+                _ = dismissPythonLocalNetworkPromptIfPresent()
                 let panel = app.descendants(matching: .sheet).matching(identifier: "save-panel").firstMatch
                 let confirm = panel.buttons["OKButton"]
                 guard confirm.waitForExistence(timeout: 12), confirm.isHittable else {
@@ -180,8 +181,20 @@ final class OnboardingUITests: XCTestCase {
                     throw DriverFailure(errorDescription: "The system PDF save confirmation is unreachable")
                 }
                 panel.textFields["saveAsNameTextField"].typeKey("g", modifierFlags: [.command, .shift])
+                app.typeKey("a", modifierFlags: .command)
                 app.typeText(folder)
                 app.typeKey(.return, modifierFlags: [])
+                let folderName = URL(fileURLWithPath: folder).lastPathComponent
+                let selectedFolder = panel.descendants(matching: .any).matching(
+                    NSPredicate(format: "label == %@ OR value == %@", folderName, folderName)
+                ).firstMatch
+                guard selectedFolder.waitForExistence(timeout: 12), confirm.isEnabled, confirm.isHittable else {
+                    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                    attachment.name = "System PDF save destination"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    throw DriverFailure(errorDescription: "The system PDF save dialog did not select the requested folder")
+                }
                 confirm.click()
             case "press", "fill", "hover":
                 guard element.exists, element.isEnabled, element.isHittable else {

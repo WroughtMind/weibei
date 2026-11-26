@@ -152,7 +152,6 @@ html[lang="en"] .language-toggle::after { transform: translateX(28px); }
 .experience-page h4 { margin: 8% 0 3%; font-size: 16px; }
 .experience-page p { color: #5f574f; line-height: 1.72; }
 .experience-page small, .selection-column span, .source-column span { color: var(--vermilion); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; letter-spacing: .06em; }
-.experience-page[data-mode="read"]:not(.experience-shot-page) { display: grid; grid-template-columns: 1.45fr .9fr .65fr; gap: 5%; }
 .selection-column, .source-column { padding-left: 9%; border-left: 1px solid var(--line); }
 .selection-column blockquote { margin: 14% 0 0; padding: 13px 15px; border-left: 3px solid var(--vermilion); color: #534a40; background: rgba(184,52,32,.06); line-height: 1.65; }
 .source-column p { margin: 18% 0 0; font-size: 12px; }
@@ -179,27 +178,8 @@ html[lang="en"] .language-toggle::after { transform: translateX(28px); }
 .experience-mode-label[data-mode="overview"] .mode-word { opacity: 1; filter: blur(0); transform: translate(-50%, 0) scale(1); transition: translate var(--duration-lg) var(--ease-in-out), opacity var(--duration-sm) var(--ease-out), filter var(--duration-sm) var(--ease-out), transform var(--duration-sm) var(--ease-out); }
 .experience-mode-label[data-mode="overview"] .mode-read { --mode-offset: -32; }
 .experience-mode-label[data-mode="overview"] .mode-write { --mode-offset: 32; }
-.experience-mode-label[data-mode="read"] .mode-read,
-.experience-mode-label[data-mode="chat"] .mode-chat,
-.experience-mode-label[data-mode="write"] .mode-write { opacity: 1; filter: blur(0); transform: translate(-50%, 0) scale(1.06); transition: translate var(--duration-lg) var(--ease-in-out), opacity var(--duration-sm) var(--ease-out), filter var(--duration-sm) var(--ease-out), transform var(--duration-sm) var(--ease-out); }
 html[data-scene="2"] .experience-mode-label { opacity: 1; transition: opacity var(--duration-sm) var(--ease-out); }
 
-.window-pager { position: absolute; z-index: 40; inset: 0; pointer-events: none; opacity: 0; transition: opacity var(--duration-sm-exit) var(--ease-in); }
-.window-pager button { position: absolute; top: 50%; display: grid; place-items: center; width: 60px; height: 76px; padding: 0; border: 0; color: rgba(37,34,31,.76); background: transparent; font-size: 36px; cursor: pointer; pointer-events: none; opacity: .48; transform: translateY(-50%); transition: opacity var(--duration-control) var(--ease-out), transform var(--duration-control) var(--ease-out); }
-.window-pager button:first-child { left: -82px; }
-.window-pager button:last-child { right: -82px; }
-.window-pager button:hover, .window-pager button:focus-visible { opacity: 1; background: transparent; outline: 0; }
-.window-pager button:active { transform: translateY(-50%) scale(.96); }
-html[data-scene="2"] .window-pager { opacity: 1; transition: opacity var(--duration-sm) var(--ease-out); }
-html[data-scene="2"] .window-pager button { pointer-events: auto; }
-html[data-scene="2"] .journey-stage:hover .window-pager button { opacity: .74; }
-html[data-scene="2"] .window-pager button:hover, html[data-scene="2"] .window-pager button:focus-visible { opacity: 1; }
-.experience-tabs { position: absolute; top: calc(100% + 18px); left: 12%; width: 76%; display: flex; justify-content: center; gap: 12px; text-align: center; font: 14px/1.8 system-ui, sans-serif; color: var(--ink-soft); visibility: hidden; opacity: 0; pointer-events: none; transition: opacity var(--duration-sm-exit) var(--ease-in), visibility 0s var(--ease-in) var(--duration-sm-exit); }
-html[data-scene="2"] .experience-tabs { visibility: visible; opacity: 1; pointer-events: auto; transition: opacity var(--duration-sm) var(--ease-out); }
-.experience-tabs button { min-width: 56px; min-height: 44px; padding: 6px 10px; border: 0; border-bottom: 1px solid transparent; color: inherit; background: transparent; font: inherit; transition: color var(--duration-control) var(--ease-out), border-color var(--duration-control) var(--ease-out); }
-.experience-tabs button:hover, .experience-tabs button[aria-pressed="true"] { color: var(--vermilion); border-bottom-color: currentColor; }
-.experience-tabs button[aria-pressed="true"] { transition: color var(--duration-sm-exit) var(--ease-out-strong), border-color var(--duration-sm-exit) var(--ease-out-strong); }
-.experience-tabs button:active { opacity: .6; }
 
 .themes-layer { inset: -5% -9%; overflow: hidden; padding: 6px; pointer-events: none; }
 html[data-scene="3"] .themes-layer { pointer-events: auto; }
@@ -456,9 +436,6 @@ html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[
   html[data-scene="2"] .journey-stage { top: 48%; transform: translate3d(-50%, -50%, 0) !important; }
   .experience-mode-label { top: -38px; }
   .mode-word { font-size: 17px; }
-  .window-pager { display: none; }
-  .experience-tabs { top: calc(100% + 20px); left: 0; width: 100%; gap: 8px; font-size: 13px; }
-  .experience-tabs button { min-width: 60px; }
 
   html[data-scene="3"] .journey-stage { top: 52%; width: 100vw; height: 72dvh; aspect-ratio: auto; transform: translate3d(-50%, -50%, 0) !important; }
   .themes-layer { inset: 0; padding: 3px; }
@@ -529,7 +506,7 @@ html[data-scene="1"] .blank-layer, html[data-scene="2"] .experience-layer, html[
   .scene-rail button::before { scale: 1; transform: none; }
   .download-paper { animation: download-fade var(--duration-sm-exit) var(--ease-out) both; }
   :is(.github-link, .language-toggle span, .nav-download, .rail-label, .experience-page,
-      .experience-mode-label, .mode-word, .window-pager, .window-pager button, .experience-tabs,
+      .experience-mode-label, .mode-word,
       .theme-preview, .theme-art, .theme-name, .mascot-three, .release-title, .hero-tagline),
   .theme-preview::after, .credit-row::after {
     transition: opacity var(--duration-sm-exit) var(--ease-out) !important;

@@ -11,13 +11,6 @@ struct CourseRecordsView: View {
     @Binding var selectedSessionID: UUID?
     let isCompact: Bool
 
-    private struct SessionGroup: Identifiable {
-        let id: String
-        let course: Course?
-        let title: String
-        let sessions: [StudySession]
-    }
-
     private var courseSessions: [StudySession] {
         guard let courseID = store.courseWorkspaceCourseID else { return [] }
         return store.sessionsTouchingCourse(courseID)
@@ -39,30 +32,6 @@ struct CourseRecordsView: View {
                     $0.text.localizedCaseInsensitiveContains(cleaned)
                 }
         }
-    }
-
-    private var groups: [SessionGroup] {
-        guard let courseID = store.courseWorkspaceCourseID,
-              let course = store.course(withID: courseID),
-              !filteredSessions.isEmpty else {
-            return []
-        }
-        return [
-            SessionGroup(
-                id: course.id.uuidString,
-                course: course,
-                title: course.title,
-                sessions: filteredSessions
-            ),
-        ]
-    }
-
-    private var memoryScope: LearningMemoryScope? {
-        store.courseWorkspaceCourseID.map(LearningMemoryScope.course)
-    }
-
-    private var memoryCount: Int {
-        memoryScope.map { store.learningMemoryEntries(in: $0).count } ?? 0
     }
 
     private var cleanedSearch: String {

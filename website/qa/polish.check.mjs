@@ -51,7 +51,7 @@ export async function checkDownloads(assets = []) {
 }
 
 export async function checkWebsitePolish() {
-  const detail = document.querySelector('.experience-tabs');
+  const detail = document.querySelector('.experience-layer');
   const themes = document.querySelector('.themes-layer');
   const release = document.querySelector('.release-layer');
   await enter(1);
@@ -59,17 +59,7 @@ export async function checkWebsitePolish() {
   if (innerWidth <= 760) assert(document.querySelector('.hero-tagline').getBoundingClientRect().bottom <= document.querySelector('.blank-layer').getBoundingClientRect().top, '首屏截图遮住了产品介绍');
   await enter(2);
   assert(!detail.inert && themes.inert && release.inert, '第二幕操作边界不正确');
-  for (const button of document.querySelectorAll('[data-mode-target]')) {
-    button.click();
-    const mode = button.dataset.modeTarget;
-    assert(document.querySelector('.experience-page.is-active').dataset.mode === mode, '切换按钮没有打开对应截图');
-    assert(document.querySelectorAll('[data-mode-target][aria-pressed="true"]').length === 1, '选中状态不唯一');
-    if (innerWidth <= 760) assert(button.getBoundingClientRect().height >= 44, '手机点击区域过小');
-  }
-  const selected = document.querySelector('.experience-page.is-active').dataset.mode;
-  await new Promise(resolve => setTimeout(resolve, 4600));
-  assert(document.querySelector('.experience-page.is-active').dataset.mode === selected, '手动选中的内容仍被自动轮换打断');
-  assert(detail.getBoundingClientRect().top >= document.querySelector('.experience-layer').getBoundingClientRect().bottom, '操作区遮住截图');
+  assert(detail.querySelector('.experience-shot-page img')?.naturalWidth > 0, '第二幕工作区截图未载入');
   await enter(3);
   assert(detail.inert && !themes.inert && release.inert, '第三幕操作边界不正确');
   await enter(4);
