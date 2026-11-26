@@ -2091,18 +2091,14 @@ struct AgentPaneView: View {
     private func agentInputTray(wide: Bool) -> some View {
         let minHeight = AgentChatLayoutMetrics.composerHeight
         let fontSize = AgentChatLayoutMetrics.composerFontSize
+        let hasContextItems = store.hasSelectionAttachments
+            || !store.conversationQuotes(in: store.activeStudySessionID).isEmpty
         // ChatGPT-like: the tray shares the exact conversation paper — no
         // gradient strip, no glass seam, no divider. The rounded field alone
         // separates input from messages.
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 AgentUnconfiguredHint(store: store)
-
-                if store.hasSelectionAttachments {
-                    AgentSelectionAttachmentPill()
-                        .transition(WeiBeiTransition.floating)
-                }
-                ConversationQuoteTray(sessionID: store.activeStudySessionID)
 
                 ComposerView(
                     prompt: agentPrompt,
@@ -2116,7 +2112,15 @@ struct AgentPaneView: View {
                     horizontalPadding: 16,
                     verticalPadding: 6,
                     focusTrigger: composerFocusTrigger,
-                    showsReasoningEffort: true
+                    showsReasoningEffort: true,
+                    hasAttachedHeader: hasContextItems,
+                    header: {
+                        ComposerContextStrip(
+                            sessionID: store.activeStudySessionID,
+                            includesSelections: true,
+                            placement: .insideComposer
+                        )
+                    }
                 ) {
                     submitAgentDraft()
                 }
@@ -2312,270 +2316,497 @@ private struct AgentPaneWidthKey: PreferenceKey {
     }
 }
 
-private struct ConversationQuoteTray: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.weiBeiTextScale) private var textScale
-    let sessionID: UUID?
+enum ComposerReferencePlacement {
+    case aboveComposer
+    case insideComposer
+}
 
-    var body: some View {
-        let quotes = store.conversationQuotes(in: sessionID)
-        if let sessionID, !quotes.isEmpty {
-            let rows = VStack(alignment: .leading, spacing: 6) {
-                ForEach(quotes) { quote in
-                    ConversationQuoteRow(quote: quote, sessionID: sessionID)
-                }
+private enum ComposerContextItem: Identifiable {
+    case selection(SelectionContext)
+    case quote(ConversationQuoteAttachment)
+
+    var id: String {
+        switch self {
+        case .selection(let selection): return "selection-\(selection.id.uuidString)"
+        case .quote(let quote): return "quote-\(quote.id.uuidString)"
+        }
+    }
+
+    var rawText: String {
+        switch self {
+        case .selection(let selection): return selection.text
+        case .quote(let quote): return quote.text
+        }
+    }
+
+    var collapsedText: String {
+        rawText.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    var chipPreviewText: String {
+        Self.chipPreview(for: collapsedText)
+    }
+
+    static func chipPreview(for collapsedText: String) -> String {
+        let budget = 8.5
+        var width = 0.0
+        var endIndex = collapsedText.startIndex
+        for idx in collapsedText.indices {
+            let scalarWidth = collapsedText[idx].isASCII ? 0.55 : 1.0
+            if width + scalarWidth > budget {
+                let prefix = String(collapsedText[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return prefix + "…"
             }
-            ViewThatFits(in: .vertical) {
-                rows.fixedSize(horizontal: false, vertical: true)
-                ScrollView {
-                    rows
-                }
-                .defaultScrollAnchor(.bottom)
-            }
-            .frame(maxHeight: 102 * textScale, alignment: .topLeading)
-            .padding(.horizontal, 4)
+            width += scalarWidth
+            endIndex = collapsedText.index(after: idx)
+        }
+        return collapsedText
+    }
+
+    var iconName: String {
+        switch self {
+        case .selection(let selection):
+            return selection.source == .note ? "note.text" : "doc.text"
+        case .quote:
+            return "quote.opening"
+        }
+    }
+
+    @MainActor
+    func sourceTitle(in store: WorkspaceStore) -> String {
+        switch self {
+        case .selection(let selection):
+            let title = selection.ownerTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            return title.isEmpty ? store.ui("已选片段", "Selected excerpt") : title
+        case .quote:
+            return store.ui("对话引用", "Conversation quote")
         }
     }
 }
 
-private struct ConversationQuoteRow: View {
+struct ComposerContextStrip: View {
     @EnvironmentObject private var store: WorkspaceStore
-    let quote: ConversationQuoteAttachment
-    let sessionID: UUID
+    @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @Environment(\.weiBeiTextScale) private var textScale
+    let sessionID: UUID?
+    let includesSelections: Bool
+    let placement: ComposerReferencePlacement
+
+    private var items: [ComposerContextItem] {
+        var result: [ComposerContextItem] = []
+        if includesSelections {
+            result.append(contentsOf: interaction.selectionAttachments.map { .selection($0) })
+        }
+        if let sessionID {
+            result.append(contentsOf: store.conversationQuotes(in: sessionID).map { .quote($0) })
+        }
+        return result
+    }
+
+    static func visibleChipCount(
+        for previews: [String],
+        availableWidth: CGFloat,
+        textScale: CGFloat
+    ) -> Int {
+        guard !previews.isEmpty else { return 0 }
+        guard availableWidth > 1 else { return previews.count }
+
+        let font = WeiBeiPlatformFont.systemFont(ofSize: 11.5 * textScale, weight: .regular)
+        let overflowFont = WeiBeiPlatformFont.systemFont(ofSize: 11 * textScale, weight: .medium)
+        let spacing: CGFloat = 6
+        let chromeWidth = 26 + 28 * textScale
+
+        let chipWidths = previews.map { preview in
+            let textWidth = ceil((preview as NSString).size(withAttributes: [.font: font]).width)
+            return textWidth + chromeWidth
+        }
+
+        let totalAll = chipWidths.reduce(0, +) + spacing * CGFloat(max(0, chipWidths.count - 1))
+        if totalAll <= availableWidth || previews.count == 1 || (previews.count == 2 && availableWidth >= 200 * textScale) {
+            return previews.count
+        }
+
+        for count in stride(from: previews.count - 1, through: 1, by: -1) {
+            let hiddenCount = previews.count - count
+            let overflowLabel = "+\(hiddenCount)"
+            let overflowWidth = ceil((overflowLabel as NSString).size(withAttributes: [.font: overflowFont]).width) + 18 * textScale
+            let prefixWidth = chipWidths.prefix(count).reduce(0, +) + spacing * CGFloat(max(0, count - 1))
+            if prefixWidth + spacing + overflowWidth <= availableWidth {
+                return count
+            }
+        }
+        return 1
+    }
+
+    var body: some View {
+        let currentItems = items
+        if !currentItems.isEmpty {
+            let previews = currentItems.map(\.chipPreviewText)
+            GeometryReader { proxy in
+                let horizontalInset: CGFloat = placement == .insideComposer ? 16 : 4
+                let visibleCount = Self.visibleChipCount(
+                    for: previews,
+                    availableWidth: max(0, proxy.size.width - horizontalInset),
+                    textScale: textScale
+                )
+                let visibleItems = Array(currentItems.prefix(visibleCount))
+                let hiddenCount = max(0, currentItems.count - visibleCount)
+
+                HStack(spacing: 6) {
+                    ForEach(visibleItems) { item in
+                        ComposerContextChip(item: item, sessionID: sessionID, placement: placement)
+                    }
+                    if hiddenCount > 0 {
+                        ComposerContextOverflowChip(
+                            hiddenCount: hiddenCount,
+                            items: currentItems,
+                            sessionID: sessionID,
+                            placement: placement
+                        )
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, placement == .insideComposer ? 8 : 2)
+                .padding(.top, placement == .insideComposer ? 8 : 0)
+                .padding(.bottom, placement == .insideComposer ? 2 : 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: (placement == .insideComposer ? 34 : 24) * textScale)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("composer-context-strip")
+        }
+    }
+}
+
+private struct ComposerContextChip: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
+    let item: ComposerContextItem
+    let sessionID: UUID?
+    let placement: ComposerReferencePlacement
     @State private var hovering = false
     @State private var previewing = false
 
+    private var fillColor: Color {
+        switch placement {
+        case .aboveComposer:
+            return WeiBeiTheme.paperRaised
+        case .insideComposer:
+            return WeiBeiTheme.paperInset.opacity(hovering || previewing ? 0.56 : 0.36)
+        }
+    }
+
+    private var strokeColor: Color {
+        switch placement {
+        case .aboveComposer:
+            return WeiBeiTheme.hairline.opacity(hovering || previewing ? 0.80 : 0.55)
+        case .insideComposer:
+            return hovering || previewing
+                ? WeiBeiTheme.hairline.opacity(0.45)
+                : .clear
+        }
+    }
+
+    private var chipIdentifier: String {
+        switch item {
+        case .selection(let selection):
+            return "agent-selection-fragment-\(selection.id.uuidString)"
+        case .quote(let quote):
+            return "conversation-quote-\(quote.id.uuidString)"
+        }
+    }
+
+    private var removeIdentifier: String {
+        switch item {
+        case .selection(let selection):
+            return "agent-selection-fragment-remove-\(selection.id.uuidString)"
+        case .quote(let quote):
+            return "conversation-quote-remove-\(quote.id.uuidString)"
+        }
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 4) {
+        let shape = RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
+        HStack(spacing: 4) {
             Button { previewing.toggle() } label: {
-                Text(quote.text.split(whereSeparator: \.isWhitespace).joined(separator: " "))
-                    .weiBeiText(12)
-                    .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-                    .lineSpacing(2)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 10)
-                    .padding(.vertical, 3)
-                    .overlay(alignment: .leading) {
-                        Capsule()
-                            .fill(WeiBeiTheme.secondaryInk.opacity(hovering ? 0.55 : 0.28))
-                            .frame(width: 2)
-                            .allowsHitTesting(false)
-                    }
+                HStack(spacing: 5) {
+                    Image(systemName: item.iconName)
+                        .weiBeiText(10.5)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .accessibilityHidden(true)
+                    Text(item.chipPreviewText)
+                        .weiBeiText(11.5)
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .frame(height: 24 * textScale)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier(chipIdentifier)
+            .accessibilityLabel(Text(item.collapsedText))
+            .help("\(item.sourceTitle(in: store))\n\(item.collapsedText)")
+            .popover(isPresented: $previewing, arrowEdge: .bottom) {
+                popoverBody
+            }
+
+            Button(action: removeItem) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8.5 * textScale, weight: .semibold))
+                    .foregroundStyle(hovering ? WeiBeiTheme.secondaryInk : WeiBeiTheme.tertiaryInk.opacity(0.72))
+                    .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .onHover { hovering = $0 }
-            .accessibilityIdentifier("conversation-quote-\(quote.id.uuidString)")
-            .accessibilityLabel(store.ui("预览引用：", "Preview quote: ") + quote.text)
-            .popover(isPresented: $previewing, arrowEdge: .bottom) {
-                let excerpt = Text(quote.text)
-                    .weiBeiText(12)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(store.ui("对话引用", "Conversation quote")).weiBeiText(12, weight: .medium)
-                    ViewThatFits(in: .vertical) {
-                        excerpt
-                        ScrollView { excerpt }
-                    }
-                    .frame(maxHeight: 220, alignment: .topLeading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    if let messageID = quote.messageID,
-                       store.conversationMessages(in: sessionID).contains(where: { $0.id == messageID }) {
-                        Button(store.ui("返回原消息", "Go to original message")) {
-                            previewing = false
-                            NotificationCenter.default.post(name: .weiBeiScrollAgentToMessage, object: messageID,
-                                userInfo: ["sessionID": sessionID])
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                        .accessibilityIdentifier("conversation-quote-source-\(quote.id.uuidString)")
-                    }
-                }
-                .padding(12).frame(width: 320, alignment: .leading)
-                .background(WeiBeiTheme.paperRaised)
-            }
-            Button { store.removeConversationQuotes([quote.id], in: sessionID) } label: {
-                Image(systemName: "xmark").weiBeiText(9, weight: .semibold)
-            }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 22))
-            .accessibilityIdentifier("conversation-quote-remove-\(quote.id.uuidString)")
-            .accessibilityLabel(store.ui("移除引用", "Remove quote"))
+            .accessibilityIdentifier(removeIdentifier)
+            .accessibilityLabel(store.ui("移除引用", "Remove reference"))
         }
+        .padding(.leading, 8)
+        .padding(.trailing, 5)
+        .frame(height: 24 * textScale)
+        .background(fillColor, in: shape)
+        .overlay(shape.stroke(strokeColor, lineWidth: 0.5))
+        .onHover { hovering = $0 }
+    }
+
+    private func removeItem() {
+        previewing = false
+        switch item {
+        case .selection(let selection):
+            store.removeSelectionAttachment(id: selection.id)
+        case .quote(let quote):
+            if let sessionID {
+                store.removeConversationQuotes([quote.id], in: sessionID)
+            }
+        }
+    }
+
+    private var popoverBody: some View {
+        let excerpt = Text(item.rawText)
+            .weiBeiText(12)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text(item.sourceTitle(in: store))
+                    .weiBeiText(12, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                ComposerContextSourceButton(item: item, sessionID: sessionID) {
+                    previewing = false
+                }
+            }
+            ViewThatFits(in: .vertical) {
+                excerpt
+                ScrollView { excerpt }
+            }
+            .frame(maxHeight: 220, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(width: 320, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised)
     }
 }
 
-private struct AgentSelectionAttachmentPill: View {
+private struct ComposerContextOverflowChip: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @Environment(\.weiBeiTextScale) private var textScale
+    let hiddenCount: Int
+    let items: [ComposerContextItem]
+    let sessionID: UUID?
+    let placement: ComposerReferencePlacement
     @State private var hovering = false
-    @State private var showingManager = false
-    @State private var previewContentHeight: CGFloat?
+    @State private var showsAll = false
 
-    private var countLabel: String {
-        let count = interaction.selectionAttachments.count
-        return store.ui("\(count) 个已选文本片段", "\(count) selected text fragments")
+    private var fillColor: Color {
+        switch placement {
+        case .aboveComposer:
+            return WeiBeiTheme.paperRaised
+        case .insideComposer:
+            return WeiBeiTheme.paperInset.opacity(hovering || showsAll ? 0.56 : 0.36)
+        }
     }
 
-    private var sourceSummary: String {
-        var seen = Set<String>()
-        let titles = interaction.selectionAttachments.map(\.ownerTitle)
-            .filter { !$0.isEmpty && seen.insert($0).inserted }
-        let names = titles.prefix(3).joined(separator: store.ui("、", ", "))
-        if titles.count > 3 {
-            return store.ui("\(names) 等 \(titles.count) 个来源", "\(names) and \(titles.count - 3) more")
+    private var strokeColor: Color {
+        switch placement {
+        case .aboveComposer:
+            return WeiBeiTheme.hairline.opacity(hovering || showsAll ? 0.80 : 0.55)
+        case .insideComposer:
+            return hovering || showsAll
+                ? WeiBeiTheme.hairline.opacity(0.45)
+                : .clear
         }
-        return names.isEmpty ? countLabel : names
     }
 
     var body: some View {
-        if !interaction.selectionAttachments.isEmpty {
-            HStack(spacing: 4) {
-                Button { showingManager.toggle() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "text.bubble")
-                            .weiBeiText(12, weight: .medium)
-                        Text(countLabel)
-                            .weiBeiText(12, weight: .medium)
-                    }
-                    .frame(minHeight: 28)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering = $0 }
-                .help(Text(verbatim: sourceSummary))
-                .accessibilityLabel(Text(verbatim: countLabel))
-                .accessibilityHint(Text(store.ui("查看来源并管理片段", "Review sources and manage fragments")))
-                .accessibilityIdentifier("agent-selection-attachment-preview-anchor")
-                .popover(isPresented: $showingManager, arrowEdge: .bottom) {
-                    previewContent
-                        .frame(idealWidth: 340, maxWidth: 360)
-                        .presentationCompactAdaptation(.popover)
-                }
-
-                Button(action: clearAllAttachments) {
-                    Image(systemName: "xmark")
-                        .weiBeiText(9.5, weight: .semibold)
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(size: 18))
-                .accessibilityLabel(Text(store.ui("清空已选文本片段", "Clear selected text fragments")))
-                .help(store.ui("清空已选文本片段", "Clear selected text fragments"))
-            }
-            .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-            .padding(.leading, 10)
-            .padding(.trailing, 6)
-            .frame(height: 28)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(hovering ? 0.72 : 0.54),
-                stroke: WeiBeiTheme.hairline.opacity(hovering ? 0.68 : 0.38),
-                cornerRadius: 8,
-                contactShadow: hovering
+        let shape = RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius, style: .continuous)
+        Button { showsAll.toggle() } label: {
+            Text("+\(hiddenCount)")
+                .weiBeiText(11, weight: .medium)
+                .monospacedDigit()
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .padding(.horizontal, 8)
+                .frame(height: 24 * textScale)
+                .background(fillColor, in: shape)
+                .overlay(shape.stroke(strokeColor, lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityIdentifier("composer-context-overflow")
+        .accessibilityLabel(store.ui("查看全部 \(items.count) 条引用", "View all \(items.count) references"))
+        .help(store.ui("查看全部 \(items.count) 条引用", "View all \(items.count) references"))
+        .popover(isPresented: $showsAll, arrowEdge: .bottom) {
+            ComposerContextAllPopover(
+                items: items,
+                sessionID: sessionID,
+                dismiss: { showsAll = false }
             )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onDisappear { showingManager = false }
+            .environmentObject(store)
         }
     }
+}
 
-    private func clearAllAttachments() {
-        showingManager = false
-        store.clearSelectionAttachments()
+private struct ComposerContextAllPopover: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    fileprivate let items: [ComposerContextItem]
+    let sessionID: UUID?
+    let dismiss: () -> Void
+
+    fileprivate init(items: [ComposerContextItem], sessionID: UUID?, dismiss: @escaping () -> Void) {
+        self.items = items
+        self.sessionID = sessionID
+        self.dismiss = dismiss
     }
 
-    private var previewContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(store.ui("\(interaction.selectionAttachments.count) 个已选文本片段", "\(interaction.selectionAttachments.count) selected text fragments"))
-                    .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                Spacer()
-                Text(store.ui("发问时会作为上下文", "Used as context when asking"))
-                    .weiBeiText(10.5, weight: .medium)
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(store.ui("已附 \(items.count) 条引用", "\(items.count) references"))
+                    .weiBeiText(12, weight: .medium)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                Spacer(minLength: 8)
                 Button(store.ui("清空", "Clear")) {
-                    clearAllAttachments()
+                    store.clearSelectionAttachments()
+                    if let sessionID {
+                        let quoteIDs = Set(store.conversationQuotes(in: sessionID).map(\.id))
+                        if !quoteIDs.isEmpty {
+                            store.removeConversationQuotes(quoteIDs, in: sessionID)
+                        }
+                    }
+                    dismiss()
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
-                .accessibilityIdentifier("agent-selection-attachment-preview-clear")
-                .help(store.ui("清空全部选区片段", "Clear all selected fragments"))
-                Button { showingManager = false } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(size: 20))
-                .accessibilityLabel(Text(store.ui("关闭", "Close")))
-                .accessibilityIdentifier("agent-selection-attachment-close")
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 9) {
-                    ForEach(Array(interaction.selectionAttachments.enumerated()), id: \.element.id) { index, selection in
-                        selectionAttachmentRow(index: index, selection: selection)
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.45))
+                .frame(height: 0.5)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        if index > 0 {
+                            Rectangle()
+                                .fill(WeiBeiTheme.hairline.opacity(0.35))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 12)
+                        }
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 6) {
+                                Image(systemName: item.iconName)
+                                    .weiBeiText(10.5)
+                                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                                Text(item.sourceTitle(in: store))
+                                    .weiBeiText(11, weight: .medium)
+                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                    .lineLimit(1)
+                                Spacer(minLength: 4)
+                                ComposerContextSourceButton(item: item, sessionID: sessionID, onNavigate: dismiss)
+                                Button {
+                                    remove(item)
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                                        .frame(width: 18, height: 18)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(store.ui("移除引用", "Remove reference"))
+                            }
+                            Text(item.rawText)
+                                .weiBeiText(12)
+                                .foregroundStyle(WeiBeiTheme.ink)
+                                .lineSpacing(3)
+                                .lineLimit(4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
                     }
                 }
-                .background(GeometryReader { proxy in
-                    Color.clear.preference(key: SelectionAttachmentPreviewHeightKey.self, value: proxy.size.height)
-                })
             }
-            .frame(height: previewContentHeight.map { min($0, 260) })
-            .frame(maxHeight: 260)
-            .onPreferenceChange(SelectionAttachmentPreviewHeightKey.self) { height in
-                // The card only exists for nonempty fragments. Zero is the
-                // preference's initial value, not a measured content height.
-                guard height.isFinite, height > 0 else { return }
-                previewContentHeight = height
-            }
+            .frame(maxHeight: 280)
         }
-        .padding(12)
+        .frame(width: 320, alignment: .leading)
         .background(WeiBeiTheme.paperRaised)
     }
 
-    private func selectionAttachmentRow(index: Int, selection: SelectionContext) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(store.ui("片段 \(index + 1)", "Fragment \(index + 1)"))
-                    .weiBeiText(12, weight: .semibold)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                Text(selection.ownerTitle)
-                    .weiBeiText(10.5, weight: .medium)
-                    .lineLimit(1)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                Spacer(minLength: 8)
-                Button {
-                    if interaction.selectionAttachments.count == 1 { showingManager = false }
-                    store.removeSelectionAttachment(id: selection.id)
-                } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(size: 20))
-                .accessibilityLabel(Text(store.ui("移除片段 \(index + 1)", "Remove fragment \(index + 1)")))
-                .accessibilityIdentifier("agent-selection-fragment-remove-\(selection.id.uuidString)")
-                .help(store.ui("移除这个选区片段", "Remove this selected fragment"))
+    private func remove(_ item: ComposerContextItem) {
+        switch item {
+        case .selection(let selection):
+            store.removeSelectionAttachment(id: selection.id)
+        case .quote(let quote):
+            if let sessionID {
+                store.removeConversationQuotes([quote.id], in: sessionID)
             }
-
-            Text(selection.text)
-                .weiBeiText(12)
-                .lineSpacing(3)
-                .lineLimit(5)
-                .foregroundStyle(WeiBeiTheme.ink)
-                .allowsHitTesting(false)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 1)
         }
-        .padding(9)
-        .weibeiEtchedBackground(
-            fill: WeiBeiTheme.paperInset.opacity(0.32),
-            stroke: WeiBeiTheme.hairline.opacity(0.36),
-            cornerRadius: 8
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
-
 }
 
-private struct SelectionAttachmentPreviewHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+private struct ComposerContextSourceButton: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let item: ComposerContextItem
+    let sessionID: UUID?
+    let onNavigate: () -> Void
+
+    var body: some View {
+        switch item {
+        case .quote(let quote):
+            if let sessionID,
+               let messageID = quote.messageID,
+               store.conversationMessages(in: sessionID).contains(where: { $0.id == messageID }) {
+                Button(store.ui("返回原消息", "Go to original message")) {
+                    onNavigate()
+                    NotificationCenter.default.post(
+                        name: .weiBeiScrollAgentToMessage,
+                        object: messageID,
+                        userInfo: ["sessionID": sessionID]
+                    )
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .accessibilityIdentifier("conversation-quote-source-\(quote.id.uuidString)")
+            }
+        case .selection(let selection):
+            if selection.itemID != nil || !selection.ownerTitle.isEmpty {
+                Button(store.ui("打开原文", "Open source")) {
+                    onNavigate()
+                    if !store.openSourceReference(selection.ownerTitle), let itemID = selection.itemID {
+                        store.openContextualItem(itemID, kind: selection.source == .note ? .note : .material)
+                    }
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .accessibilityIdentifier("agent-selection-fragment-source-\(selection.id.uuidString)")
+            }
+        }
+    }
 }
 
 private struct FloatingSelectionPreview: View {
@@ -3146,7 +3377,11 @@ struct FloatingSelectionAgentView: View {
         } else {
             VStack(alignment: .leading, spacing: 4) {
                 AgentUnconfiguredHint(store: store)
-                ConversationQuoteTray(sessionID: interaction.activeSelectionAskThreadID)
+                ComposerContextStrip(
+                    sessionID: interaction.activeSelectionAskThreadID,
+                    includesSelections: false,
+                    placement: .aboveComposer
+                )
                 ComposerView(
                     prompt: showsFloatingFeed
                         ? store.ui("再问一点…", "Ask a follow-up…")

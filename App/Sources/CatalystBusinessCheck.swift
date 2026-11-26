@@ -1757,12 +1757,12 @@ enum CatalystBusinessCheck {
                 && mainComposer.text == mainQuoted
         }
         try capture("selection-quote-main-visible.png")
-        // Crossing an existing selection attachment used to open a modal hover
-        // popover and consume the next click on the new conversation quote.
-        try await waitForOnboardingControl("agent-selection-attachment-preview-anchor")
-        _ = try await onboardingUICommand("hover", id: "agent-selection-attachment-preview-anchor")
-        guard try await accessibilityElement("agent-selection-attachment-preview-clear") == nil else {
-            throw Failure("hover opened the selection fragment manager")
+        // Crossing an existing selection attachment must not open a hover preview popover.
+        guard let fragment = store.selectionAttachments.first else { throw Failure("missing selection fragment") }
+        try await waitForOnboardingControl("agent-selection-fragment-\(fragment.id.uuidString)")
+        _ = try await onboardingUICommand("hover", id: "agent-selection-fragment-\(fragment.id.uuidString)")
+        guard try await accessibilityElement("agent-selection-fragment-source-\(fragment.id.uuidString)") == nil else {
+            throw Failure("hover opened the selection fragment preview")
         }
         try await activate("conversation-quote-\(mainQuote.id.uuidString)")
         try await until("quote preview offers its source") {
@@ -1784,14 +1784,13 @@ enum CatalystBusinessCheck {
             return abs(frame.minY - viewport.minY) < 2 && viewport.intersection(frame).height > 1
                 && isVisible(firstBody, in: window)
         }
-        try await activate("agent-selection-attachment-preview-anchor")
-        try await waitForOnboardingControl("agent-selection-attachment-preview-clear")
-        guard let fragment = store.selectionAttachments.first else { throw Failure("missing selection fragment") }
+        try await activate("agent-selection-fragment-\(fragment.id.uuidString)")
+        try await waitForOnboardingControl("agent-selection-fragment-source-\(fragment.id.uuidString)")
         try await waitForOnboardingControl("agent-selection-fragment-remove-\(fragment.id.uuidString)")
-        _ = try await onboardingUICommand("screenshot", id: "Selection fragment manager")
-        try await activate("agent-selection-attachment-close")
-        try await until("closing the fragment manager keeps its selections") {
-            try await accessibilityElement("agent-selection-attachment-close") == nil
+        _ = try await onboardingUICommand("screenshot", id: "Selection fragment preview")
+        try await activate("agent-selection-fragment-source-\(fragment.id.uuidString)")
+        try await until("closing the fragment preview keeps its selections") {
+            try await accessibilityElement("agent-selection-fragment-source-\(fragment.id.uuidString)") == nil
                 && store.selectionAttachments.contains(where: { $0.id == fragment.id })
         }
         guard store.openAgentReplySource(source) else { throw Failure("floating discussion did not reopen after main quote preview") }

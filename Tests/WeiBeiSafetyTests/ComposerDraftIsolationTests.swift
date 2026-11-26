@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import WeiBei
 import WeiBeiCore
@@ -130,5 +132,20 @@ final class ComposerDraftIsolationTests: XCTestCase {
                 for: "key-\(AgentFinalizedMarkdownHeightCache.capacity + 7)"
             )
         )
+    }
+
+    @MainActor
+    func testComposerContextStripFoldsOverflowCleanly() {
+        let previews = [
+            "作者提议的延迟接受…",
+            "如果允许选民有任意…",
+            "指的是投票理论中的…",
+            "reference domain（不受…",
+        ]
+        XCTAssertEqual(ComposerContextStrip.visibleChipCount(for: Array(previews.prefix(2)), availableWidth: 260, textScale: 1), 2)
+        XCTAssertEqual(ComposerContextStrip.visibleChipCount(for: previews, availableWidth: 260, textScale: 1), 1)
+        XCTAssertEqual(ComposerContextStrip.visibleChipCount(for: previews, availableWidth: 380, textScale: 1), 2)
+        XCTAssertEqual(ComposerContextStrip.visibleChipCount(for: previews, availableWidth: 560, textScale: 1), 3)
+        XCTAssertEqual(ComposerContextStrip.visibleChipCount(for: previews, availableWidth: 960, textScale: 1), 4)
     }
 }
