@@ -2867,14 +2867,38 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var readerTabMaterials: [StudyItem] {
-        readerTabIDs.compactMap { id in
-            importedItems.first { $0.id == id && $0.isCourseMaterial }
+        let validCourseID = activeCourseID
+        return readerTabIDs.compactMap { id in
+            guard let item = importedItems.first(where: { $0.id == id && $0.isCourseMaterial }) else {
+                return nil
+            }
+            if let validCourseID {
+                let itemCourseIDs = courseIDs(for: item.id)
+                guard itemCourseIDs.isEmpty || itemCourseIDs.contains(validCourseID) else {
+                    return nil
+                }
+            }
+            return item
         }
+    }
+
+    func readerTabProgressSummary(for item: StudyItem) -> String? {
+        let location = studyLocation(for: item.id)
+        if item.kind == .pdf {
+            return location?.pageIndex.map { ui("第 \($0 + 1) 页", "Page \($0 + 1)") }
+        }
+        guard let raw = location?.locationTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        let cleaned = Self.userFacingReferenceTitle(raw)
+        guard !cleaned.isEmpty, cleaned != displayTitle(for: item) else { return nil }
+        return cleaned
     }
 
     func selectReaderTab(_ itemID: String?) {
         if let itemID {
-            guard readerTabIDs.contains(itemID), item(withID: itemID)?.isCourseMaterial == true else { return }
+            guard readerTabMaterials.contains(where: { $0.id == itemID }) else { return }
         }
         if selectedItemID != itemID {
             selectMeasured(itemID: itemID, opensNotebook: false)
@@ -2887,7 +2911,10 @@ final class WorkspaceStore: ObservableObject {
         let tabs = readerTabMaterials
         guard let index = tabs.firstIndex(where: { $0.id == itemID }) else { return }
         readerTabIDs.removeAll { $0 == itemID }
-        guard selectedItemID == itemID else { return }
+        guard selectedItemID == itemID else {
+            save()
+            return
+        }
 
         let nextID = tabs.dropFirst(index + 1).first?.id ?? tabs.prefix(index).last?.id
         selectReaderTab(nextID)
@@ -10476,6 +10503,14 @@ final class WorkspaceStore: ObservableObject {
         }
         courseNoteLoadTasksByItemID.removeValue(forKey: oldID)?.cancel()
         courseNoteLoadGenerationByItemID.removeValue(forKey: oldID)
+        if let oldIndex = readerTabIDs.firstIndex(of: oldID) {
+            if readerTabIDs.contains(newID) {
+                readerTabIDs.removeAll { $0 == oldID }
+            } else {
+                readerTabIDs[oldIndex] = newID
+                readerTabIDs.removeAll { $0 == oldID }
+            }
+        }
         if selectedItemID == oldID { selectedItemID = newID }
         if activeNotebookItemID == oldID { activeNotebookItemID = newID }
         if courseWorkspaceTargetItemID == oldID { courseWorkspaceTargetItemID = newID }
@@ -11017,6 +11052,14 @@ final class WorkspaceStore: ObservableObject {
             pendingNoteWritesByItemID = [:]
         }
         noteBackingContentDigestsByItemID = snapshot.noteBackingContentDigestsByItemID ?? [:]
+        var restoredTabIDs: [String] = []
+        var seenTabIDs: Set<String> = []
+        for id in snapshot.readerTabIDs ?? [] where seenTabIDs.insert(id).inserted {
+            if importedItems.contains(where: { $0.id == id && $0.isCourseMaterial }) {
+                restoredTabIDs.append(id)
+            }
+        }
+        readerTabIDs = restoredTabIDs
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
         courses = snapshot.courses ?? []
@@ -11157,6 +11200,7 @@ final class WorkspaceStore: ObservableObject {
                     ? nil
                     : noteBackingContentDigestsByItemID,
                 selectedItemID: selectedItemID,
+                readerTabIDs: readerTabIDs.isEmpty ? nil : readerTabIDs,
                 activeNotebookItemID: activeNotebookItemID,
                 courses: courses,
                 courseItemMemberships: unlinkedCourseMemberships.isEmpty ? nil : unlinkedCourseMemberships,
