@@ -2,9 +2,10 @@ import SwiftUI
 import WeiBeiCore
 
 /// 浮窗直接编辑该选区会话的草稿；主对话沿用本地编辑状态。
-struct ComposerView: View {
+struct ComposerView<Header: View>: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.weiBeiTextScale) private var textScale
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     @ObservedObject var agentAccount = AgentAccountService.shared
     @State private var mainDraft = ""
     @State private var editorHeight: CGFloat = 0
@@ -28,7 +29,54 @@ struct ComposerView: View {
     var focusTrigger = 0
     var showsReasoningEffort = false
     var sessionID: UUID? = nil
+    var hasAttachedHeader = false
+    @ViewBuilder var header: () -> Header
     var submit: () -> Void
+
+    @MainActor
+    init(
+        agentAccount: AgentAccountService? = nil,
+        prompt: String,
+        focused: FocusState<Bool>.Binding,
+        fontSize: CGFloat,
+        lineLimit: ClosedRange<Int>?,
+        height: CGFloat,
+        compactMaxHeight: CGFloat? = nil,
+        sendButtonSize: CGFloat,
+        trailingPadding: CGFloat,
+        sendTrailing: CGFloat,
+        horizontalPadding: CGFloat = 10,
+        verticalPadding: CGFloat = 0,
+        isFloating: Bool = false,
+        focusesOnAppear: Bool = false,
+        focusTrigger: Int = 0,
+        showsReasoningEffort: Bool = false,
+        sessionID: UUID? = nil,
+        hasAttachedHeader: Bool = false,
+        @ViewBuilder header: @escaping () -> Header,
+        submit: @escaping () -> Void
+    ) {
+        _agentAccount = ObservedObject(wrappedValue: agentAccount ?? .shared)
+        self.prompt = prompt
+        self.focused = focused
+        self.fontSize = fontSize
+        self.lineLimit = lineLimit
+        self.height = height
+        self.compactMaxHeight = compactMaxHeight
+        self.sendButtonSize = sendButtonSize
+        self.trailingPadding = trailingPadding
+        self.sendTrailing = sendTrailing
+        self.horizontalPadding = horizontalPadding
+        self.verticalPadding = verticalPadding
+        self.isFloating = isFloating
+        self.focusesOnAppear = focusesOnAppear
+        self.focusTrigger = focusTrigger
+        self.showsReasoningEffort = showsReasoningEffort
+        self.sessionID = sessionID
+        self.hasAttachedHeader = hasAttachedHeader
+        self.header = header
+        self.submit = submit
+    }
 
     private var targetID: UUID? { isFloating ? sessionID : store.activeStudySessionID }
     private var isRunning: Bool { targetID.map { store.isAgentRunning(in: $0) } ?? false }
@@ -58,75 +106,86 @@ struct ComposerView: View {
     }
 
     var body: some View {
-        let corner: CGFloat = isFloating ? WeiBeiMetric.controlRadius : 22
         let textHeight = max(editorHeight, fontSize + 3)
+        let isMultiline = textHeight > (fontSize * textScale) * 1.65
+        let corner: CGFloat = isFloating
+            ? WeiBeiMetric.controlRadius
+            : ((hasAttachedHeader || isMultiline) ? 16 : 22)
         let reservedControlHeight = sendButtonSize * textScale + verticalPadding * 2
         let controlBottomInset = max(verticalPadding, (height - sendButtonSize * textScale) / 2)
-        HStack(alignment: .bottom, spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                AgentComposerTextEditor(
-                    text: editorDraft,
-                    measuredHeight: $editorHeight,
-                    active: $editorActive,
-                    focused: focused,
-                    fontSize: fontSize,
-                    lineLimit: lineLimit,
-                    focusRequest: focusRequest,
-                    appearanceMode: store.appearanceMode,
-                    accessibilityLabel: prompt,
-                    submit: commitAndSubmit
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: textHeight)
+        VStack(spacing: 0) {
+            if hasAttachedHeader {
+                header()
+                    .transition(.opacity)
+            }
+            HStack(alignment: .bottom, spacing: 0) {
+                ZStack(alignment: .topLeading) {
+                    AgentComposerTextEditor(
+                        text: editorDraft,
+                        measuredHeight: $editorHeight,
+                        active: $editorActive,
+                        focused: focused,
+                        fontSize: fontSize,
+                        lineLimit: lineLimit,
+                        focusRequest: focusRequest,
+                        appearanceMode: store.appearanceMode,
+                        accessibilityLabel: prompt,
+                        submit: commitAndSubmit
+                    )
+                    .frame(maxWidth: .infinity)
+                    .frame(height: textHeight)
 
-                if visibleDraft.isEmpty && (isFloating || !editorActive) {
-                    Text(prompt)
-                        .weiBeiText(fontSize)
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(height: textHeight)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
+                    if visibleDraft.isEmpty && (isFloating || !editorActive) {
+                        Text(prompt)
+                            .weiBeiText(fontSize)
+                            .foregroundStyle(WeiBeiTheme.placeholderInk)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(height: textHeight)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .padding(.vertical, verticalPadding)
+                .padding(.trailing, hasReasoningControl ? 0 : max(trailingPadding, sendButtonSize * textScale + sendTrailing))
+                .padding(.horizontal, horizontalPadding)
+                .frame(maxWidth: .infinity, minHeight: max(height, reservedControlHeight), alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { focusRequest &+= 1 }
+                .overlay(alignment: .bottomTrailing) {
+                    if showsControl && !hasReasoningControl {
+                        sendButton
+                            .padding(.trailing, sendTrailing)
+                            .padding(.bottom, controlBottomInset)
+                    }
+                }
+                if hasReasoningControl {
+                    HStack(spacing: 12) {
+                        reasoningEffortPicker
+                        sendButton
+                            .opacity(showsControl ? 1 : 0)
+                            .disabled(!showsControl)
+                            .accessibilityHidden(!showsControl)
+                    }
+                    .padding(.trailing, sendTrailing)
+                    .padding(.bottom, controlBottomInset)
                 }
             }
-            .padding(.vertical, verticalPadding)
-            .padding(.trailing, hasReasoningControl ? 0 : max(trailingPadding, sendButtonSize * textScale + sendTrailing))
-            .padding(.horizontal, horizontalPadding)
-            .frame(maxWidth: .infinity, minHeight: max(height, reservedControlHeight), alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture { focusRequest &+= 1 }
-            .overlay(alignment: .bottomTrailing) {
-                if showsControl && !hasReasoningControl {
-                    sendButton
-                        .padding(.trailing, sendTrailing)
-                        .padding(.bottom, controlBottomInset)
-                }
-            }
-            if hasReasoningControl {
-                HStack(spacing: 12) {
-                    reasoningEffortPicker
-                    sendButton
-                        .opacity(showsControl ? 1 : 0)
-                        .disabled(!showsControl)
-                        .accessibilityHidden(!showsControl)
-                }
-                .padding(.trailing, sendTrailing)
-                .padding(.bottom, controlBottomInset)
-            }
+            .frame(maxWidth: .infinity)
+            .frame(height: min(
+                max(height, textHeight + verticalPadding * 2, reservedControlHeight),
+                compactMaxHeight.map { $0 * textScale } ?? .greatestFiniteMagnitude
+            ), alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: min(
-            max(height, textHeight + verticalPadding * 2, reservedControlHeight),
-            compactMaxHeight.map { $0 * textScale } ?? .greatestFiniteMagnitude
-        ), alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
         .weibeiComposerCard(
             cornerRadius: corner,
             focused: focused.wrappedValue,
             fill: isFloating ? WeiBeiTheme.paperInset.opacity(0.38) : WeiBeiTheme.paperRaised
         )
-        .contentShape(RoundedRectangle(cornerRadius: corner))
+        .contentShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+        .animation(reduceMotion ? nil : WeiBeiMotion.layout, value: hasAttachedHeader)
+        .animation(reduceMotion ? nil : WeiBeiMotion.layout, value: isMultiline)
         .onAppear {
             if !isFloating { mainDraft = store.composerDraft(for: targetID) }
             if focusesOnAppear || focused.wrappedValue { focusRequest &+= 1 }
@@ -240,6 +299,53 @@ struct ComposerView: View {
         .transition(WeiBeiTransition.floating)
         .animation(WeiBeiMotion.visibility(showsControl), value: showsControl)
         .weiBeiFadeWhenReducingMotion(showsControl)
+    }
+}
+
+extension ComposerView where Header == EmptyView {
+    @MainActor
+    init(
+        agentAccount: AgentAccountService? = nil,
+        prompt: String,
+        focused: FocusState<Bool>.Binding,
+        fontSize: CGFloat,
+        lineLimit: ClosedRange<Int>?,
+        height: CGFloat,
+        compactMaxHeight: CGFloat? = nil,
+        sendButtonSize: CGFloat,
+        trailingPadding: CGFloat,
+        sendTrailing: CGFloat,
+        horizontalPadding: CGFloat = 10,
+        verticalPadding: CGFloat = 0,
+        isFloating: Bool = false,
+        focusesOnAppear: Bool = false,
+        focusTrigger: Int = 0,
+        showsReasoningEffort: Bool = false,
+        sessionID: UUID? = nil,
+        submit: @escaping () -> Void
+    ) {
+        self.init(
+            agentAccount: agentAccount,
+            prompt: prompt,
+            focused: focused,
+            fontSize: fontSize,
+            lineLimit: lineLimit,
+            height: height,
+            compactMaxHeight: compactMaxHeight,
+            sendButtonSize: sendButtonSize,
+            trailingPadding: trailingPadding,
+            sendTrailing: sendTrailing,
+            horizontalPadding: horizontalPadding,
+            verticalPadding: verticalPadding,
+            isFloating: isFloating,
+            focusesOnAppear: focusesOnAppear,
+            focusTrigger: focusTrigger,
+            showsReasoningEffort: showsReasoningEffort,
+            sessionID: sessionID,
+            hasAttachedHeader: false,
+            header: { EmptyView() },
+            submit: submit
+        )
     }
 }
 

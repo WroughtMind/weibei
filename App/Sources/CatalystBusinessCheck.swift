@@ -1757,43 +1757,13 @@ enum CatalystBusinessCheck {
                 && mainComposer.text == mainQuoted
         }
         try capture("selection-quote-main-visible.png")
-        // Crossing an existing selection attachment used to open a modal hover
-        // popover and consume the next click on the new conversation quote.
-        try await waitForOnboardingControl("agent-selection-attachment-preview-anchor")
-        _ = try await onboardingUICommand("hover", id: "agent-selection-attachment-preview-anchor")
-        try await until("selection hover preview stays above its attachment") {
-            let views = descendants(window)
-            guard let anchor = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-anchor-layout" }),
-                  let preview = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-layout" }),
-                  isVisible(anchor, in: window), isVisible(preview, in: window) else { return false }
-            let anchorFrame = anchor.convert(anchor.bounds, to: window)
-            let previewFrame = preview.convert(preview.bounds, to: window)
-            return abs(previewFrame.maxY - (anchorFrame.minY - 6)) < 1
-                && window.bounds.insetBy(dx: -1, dy: -1).contains(previewFrame)
+        // Crossing an existing selection attachment must not open a hover preview popover.
+        guard let fragment = store.selectionAttachments.first else { throw Failure("missing selection fragment") }
+        try await waitForOnboardingControl("agent-selection-fragment-\(fragment.id.uuidString)")
+        _ = try await onboardingUICommand("hover", id: "agent-selection-fragment-\(fragment.id.uuidString)")
+        guard try await accessibilityElement("agent-selection-fragment-source-\(fragment.id.uuidString)") == nil else {
+            throw Failure("hover opened the selection fragment preview")
         }
-        try await waitForOnboardingControl("agent-selection-attachment-preview-clear")
-        try await until("selection hover preview shows its fragment text") {
-            guard let attachment = store.selectionAttachments.first,
-                  let marker = descendants(window).first(where: {
-                      $0.accessibilityIdentifier == "selection-attachment-preview-text-\(attachment.id.uuidString)"
-                  }), isVisible(marker, in: window) else { return false }
-            let frame = marker.convert(marker.bounds, to: window)
-            var visible = frame.intersection(window.bounds)
-            var ancestor = marker.superview
-            while let view = ancestor {
-                if view.clipsToBounds { visible = visible.intersection(view.convert(view.bounds, to: window)) }
-                ancestor = view.superview
-            }
-            return visible.height >= frame.height - 1 && visible.width >= frame.width - 1
-        }
-        try await until("selection hover preview fits its content") {
-            let views = descendants(window)
-            guard let content = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-content-layout" }),
-                  let viewport = views.first(where: { $0.accessibilityIdentifier == "selection-attachment-preview-viewport-layout" }),
-                  content.bounds.height > 0, viewport.bounds.height > 0 else { return false }
-            return abs(viewport.bounds.height - min(content.bounds.height, 260)) < 1
-        }
-        _ = try await onboardingUICommand("screenshot", id: "Selection attachment hover preview")
         try await activate("conversation-quote-\(mainQuote.id.uuidString)")
         try await until("quote preview offers its source") {
             try await accessibilityElement("conversation-quote-source-\(mainQuote.id.uuidString)") != nil
@@ -1813,6 +1783,15 @@ enum CatalystBusinessCheck {
             let frame = firstBody.convert(firstBody.bounds, to: mainConversation.collection)
             return abs(frame.minY - viewport.minY) < 2 && viewport.intersection(frame).height > 1
                 && isVisible(firstBody, in: window)
+        }
+        try await activate("agent-selection-fragment-\(fragment.id.uuidString)")
+        try await waitForOnboardingControl("agent-selection-fragment-source-\(fragment.id.uuidString)")
+        try await waitForOnboardingControl("agent-selection-fragment-remove-\(fragment.id.uuidString)")
+        _ = try await onboardingUICommand("screenshot", id: "Selection fragment preview")
+        try await activate("agent-selection-fragment-source-\(fragment.id.uuidString)")
+        try await until("closing the fragment preview keeps its selections") {
+            try await accessibilityElement("agent-selection-fragment-source-\(fragment.id.uuidString)") == nil
+                && store.selectionAttachments.contains(where: { $0.id == fragment.id })
         }
         guard store.openAgentReplySource(source) else { throw Failure("floating discussion did not reopen after main quote preview") }
         try await until("floating quote target and draft are restored after main preview") {
