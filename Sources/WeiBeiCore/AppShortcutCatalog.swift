@@ -30,12 +30,6 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
     case focusChat
     case previousMaterial
     case nextMaterial
-    case toggleRightPane
-    case threePaneWorkspace
-    case swapThreePaneSecondaryPanes
-    case immersiveReading
-    case immersiveChat
-    case immersiveWriting
     case selectionPrompt
     case hideChatOverlay
     case applyAgentAnswerToNote
@@ -61,17 +55,11 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .focusChat: return language.text("聚焦对话", "Focus Chat")
         case .previousMaterial: return language.text("上一份文稿", "Previous document")
         case .nextMaterial: return language.text("下一份文稿", "Next document")
-        case .toggleRightPane: return language.text("只看文稿 / 恢复三栏", "Document Only / Restore Three Panes")
-        case .threePaneWorkspace: return language.text("三栏工作台", "Three-Pane Workspace")
-        case .swapThreePaneSecondaryPanes: return language.text("交换笔记与对话", "Swap Notes and Chat")
-        case .immersiveReading: return language.text("沉浸阅读", "Immersive Reading")
-        case .immersiveChat: return language.text("沉浸对话", "Immersive Chat")
-        case .immersiveWriting: return language.text("沉浸写作", "Immersive Writing")
         case .selectionPrompt: return language.text("选区轻提示", "Selection Prompt")
-        case .hideChatOverlay: return language.text("隐藏对话浮层", "Hide Chat Overlay")
-        case .applyAgentAnswerToNote: return language.text("写入回答到笔记", "Write Answer to Note")
+        case .hideChatOverlay: return language.text("关闭选区浮层", "Close Selection Panel")
+        case .applyAgentAnswerToNote: return language.text("插入回答到笔记", "Insert Answer into Note")
         case .replaceNoteSelection: return language.text("替换笔记选区", "Replace Note Selection")
-        case .applyAgentPatchToEditor: return language.text("追加整理建议", "Append Organization Suggestion")
+        case .applyAgentPatchToEditor: return language.text("追加回答到笔记末尾", "Append Answer to End of Note")
         case .copyCurrentReference: return language.text("复制当前引用", "Copy Current Reference")
         case .submitAgentDraft: return language.text("发送问题", "Send question")
         }
@@ -84,11 +72,10 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
              .copyCurrentReference, .submitAgentDraft:
             return .global
         case .courseIndex, .searchInMaterial, .focusLibrary, .focusReader, .focusNotes, .focusChat,
-             .previousMaterial, .nextMaterial, .toggleRightPane, .threePaneWorkspace,
-             .swapThreePaneSecondaryPanes:
+             .previousMaterial, .nextMaterial:
             return .navigation
-        case .immersiveReading, .immersiveChat, .immersiveWriting, .selectionPrompt, .hideChatOverlay:
-            return .immersive
+        case .selectionPrompt, .hideChatOverlay:
+            return .selection
         }
     }
 
@@ -107,12 +94,6 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
         case .focusChat: return AppShortcutChord(key: "4", modifiers: .command)
         case .previousMaterial: return AppShortcutChord(key: "up", modifiers: [.command, .option])
         case .nextMaterial: return AppShortcutChord(key: "down", modifiers: [.command, .option])
-        case .toggleRightPane: return AppShortcutChord(key: "j", modifiers: .command)
-        case .threePaneWorkspace: return AppShortcutChord(key: "1", modifiers: [.command, .option])
-        case .swapThreePaneSecondaryPanes: return AppShortcutChord(key: "s", modifiers: [.command, .option])
-        case .immersiveReading: return AppShortcutChord(key: "r", modifiers: [.command, .option])
-        case .immersiveChat: return AppShortcutChord(key: "a", modifiers: [.command, .option])
-        case .immersiveWriting: return AppShortcutChord(key: "n", modifiers: [.command, .option])
         case .selectionPrompt: return AppShortcutChord(key: "3", modifiers: [.control, .option])
         case .hideChatOverlay: return AppShortcutChord(key: "0", modifiers: [.control, .option])
         case .applyAgentAnswerToNote: return AppShortcutChord(key: "a", modifiers: [.command, .shift])
@@ -127,7 +108,7 @@ public enum AppShortcutID: String, CaseIterable, Identifiable, Codable, Sendable
 public enum AppShortcutGroup: String, CaseIterable, Identifiable, Sendable {
     case global
     case navigation
-    case immersive
+    case selection
 
     public var id: String { rawValue }
 
@@ -135,7 +116,7 @@ public enum AppShortcutGroup: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .global: return language.text("全局", "Global")
         case .navigation: return language.text("导航", "Navigation")
-        case .immersive: return language.text("沉浸", "Immersive")
+        case .selection: return language.text("选区", "Selection")
         }
     }
 

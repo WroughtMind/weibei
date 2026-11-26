@@ -3,6 +3,7 @@ import UIKit
 import SwiftUI
 import Combine
 import WebKit
+import PDFKit
 import WeiBeiCore
 import MarkdownView
 import Litext
@@ -166,10 +167,7 @@ enum CatalystBusinessCheck {
             UserDefaults.standard.set(true, forKey: "weibei.libraryPlacementConfirmed")
             // --drag-panes=agent-notes (default) | reader-agent | reader-notes
             let panes = CommandLine.arguments.first { $0.hasPrefix("--drag-panes=") }.map { String($0.dropFirst("--drag-panes=".count)) } ?? "agent-notes"
-            store.paneState.showReader = true
-            store.paneState.showAgent = panes != "reader-notes"
-            store.paneState.showNotes = panes != "reader-agent"
-            store.setLayout(.documentAgentNotes)
+            store.paneState.setDocumentPanes(reader: true, agent: panes != "reader-notes", notes: panes != "reader-agent")
             // --drag-content=full opens a real material in the reader and a real note in the
             // editor, like a working session; default leaves both panes at their empty state.
             if CommandLine.arguments.contains("--drag-content=full") {
@@ -567,8 +565,21 @@ enum CatalystBusinessCheck {
             result["toolbar_snapshot_scope"] = "attached NSUIViewToolbarItem UIView hierarchy; excludes native window chrome"
             try check("native_toolbar_render_snapshots", true)
         }
+        func fullScreenToolbarHover(in window: UIWindow) -> HoverPassThroughRegion.Probe? {
+            descendants(window).compactMap { $0 as? HoverPassThroughRegion.Probe }
+                .first { $0.accessibilityIdentifier == "fullscreen-toolbar-hover" && !$0.bounds.isEmpty }
+        }
+
         func verifyToolbarAutoHide(in window: UIWindow, name: String) async throws {
-            guard let toolbar = window.windowScene?.titlebar?.toolbar else { throw Failure("toolbar unavailable") }
+            guard let scene = window.windowScene, let titlebar = scene.titlebar,
+                  let toolbar = titlebar.toolbar else { throw Failure("toolbar unavailable") }
+            let inFullScreen = scene.isFullScreen
+            let fullScreenHover = fullScreenToolbarHover(in: window)
+            let fullScreenFrame = fullScreenHover.map { $0.convert($0.bounds, to: window) }
+            if inFullScreen {
+                guard titlebar.autoHidesToolbarInFullScreen, toolbar.items.isEmpty,
+                      fullScreenFrame != nil else { throw Failure("system and workspace toolbars are not separated") }
+            }
             let panes = descendants(window).compactMap { $0 as? PersistentPaneHost.Container }
                 .filter { !$0.isHidden && $0.bounds.width > 0 }
             let hosts = panes.flatMap(\.subviews).compactMap { $0 as? CatalystHostingView }
@@ -581,13 +592,23 @@ enum CatalystBusinessCheck {
             // Native events pass through the same monitor as user input. No
             // fixture writes the controller's visibility or content geometry.
             for inside in [false, true, false] {
-                let receipt = CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: inside)
-                guard receipt["queued"] == "true" else { throw Failure("toolbar hover event unavailable") }
-                try await until("\(name) toolbar \(inside ? "reveals" : "hides")") {
-                    let state = CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)
-                    result[name + "_latest_state"] = state
-                    return state[inside ? "all_shown" : "all_hidden"] == "true"
-                        && state["toolbar_visible"] == "true" && state["hover_attached"] == "true"
+                if inFullScreen, let fullScreenHover, let fullScreenFrame {
+                    let point = CGPoint(x: fullScreenFrame.midX,
+                                        y: inside ? fullScreenFrame.midY : fullScreenFrame.maxY + 40)
+                    guard CatalystDesktopWindow.shared.postFullScreenToolbarPointerForCheck(
+                        toolbar: toolbar, at: point, click: false
+                    ) else { throw Failure("full-screen workspace hover event unavailable") }
+                    try await until("\(name) in-content hover \(inside)") { fullScreenHover.inside == inside }
+                } else {
+                    let receipt = CatalystDesktopWindow.shared.postToolbarHoverForCheck(toolbar: toolbar, inside: inside)
+                    guard receipt["queued"] == "true" else { throw Failure("toolbar hover event unavailable") }
+                    try await until("\(name) toolbar \(inside ? "reveals" : "hides")") {
+                        let state = CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar)
+                        result[name + "_latest_state"] = state
+                        return state[inside ? "all_shown" : "all_hidden"] == "true"
+                            && state[inside ? "window_buttons_shown" : "window_buttons_hidden"] == "true"
+                            && state["toolbar_visible"] == "true" && state["hover_attached"] == "true"
+                    }
                 }
                 states.append(CatalystDesktopWindow.shared.toolbarAutoHideStateForCheck(toolbar: toolbar))
                 guard geometry() == initialFrames, scrollViews.map(\.contentOffset) == initialOffsets else {
@@ -598,9 +619,11 @@ enum CatalystBusinessCheck {
                           let end = fade.locations?.dropLast().last,
                           let colors = fade.colors as? [CGColor] else { return false }
                     let fadeBottom = pane.convert(CGPoint(x: 0, y: CGFloat(end.doubleValue) * pane.bounds.height), to: window).y
+                    let expectedBottom = inFullScreen
+                        ? max(window.safeAreaInsets.top, pane.fullScreenToolbarHeight) : window.safeAreaInsets.top
                     return fade.frame == pane.bounds && fade.opacity == 1
                         && colors.first?.alpha == 0 && colors.last?.alpha == 1
-                        && abs(fadeBottom - window.safeAreaInsets.top) < 1
+                        && abs(fadeBottom - expectedBottom) < 1
                 }) else {
                     throw Failure("toolbar reading gradient disappeared during hover")
                 }
@@ -731,8 +754,28 @@ enum CatalystBusinessCheck {
             try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
             let materialURL = inputs.appendingPathComponent("候选验证材料.txt")
             try "# 阅读位置\n\n候选独立合成资料：内容增长时保留同一处文字。材料标记 WB452_SOURCE。\n".write(to: materialURL, atomically: true, encoding: .utf8)
-            let noteURL = inputs.appendingPathComponent("候选验证笔记.md")
-            try "# 候选验证笔记\n\n这是独立测试资料，不是用户笔记。\n".write(to: noteURL, atomically: true, encoding: .utf8)
+            let noteTitle = "清晨散步"
+            let noteURL = inputs.appendingPathComponent(noteTitle + ".md")
+            try """
+            # \(noteTitle)
+
+            出门时天还阴着。沿河走到第三座桥，雾刚散开，水面也亮了起来。
+
+            ## 沿途所见
+
+            | 地点 | 记录 |
+            | --- | --- |
+            | 桥头 | 灰鹭停在浅滩，风把水纹推向东岸。 |
+            | 旧书摊 | 带回一本散文集，书页间夹着一张车票。 |
+            | 河边石阶 | 下过雨，石阶上留着几片银杏叶。 |
+
+            > 摊主说，下周还会带几本写这条河的旧书。
+
+            ## 下次再走
+
+            - 查查散文集里提到的那座旧桥。
+            - 从桥头沿河走回书摊，试试半小时能不能走完。
+            """.write(to: noteURL, atomically: true, encoding: .utf8)
             var confirmedItems: [StudyItem] = []
             let importSheet = {
                 // Catalyst can host the sheet outside connectedScenes.windows.
@@ -854,7 +897,7 @@ enum CatalystBusinessCheck {
                   let persistedNote = store.resolvedLibraryURL(for: note) else { throw Failure("original import returned no material/note") }
             store.openCourseNote(note.id)
             store.paneState.showReader = true; store.paneState.showAgent = true; store.paneState.showNotes = true
-            store.setLayout(.documentAgentNotes)
+            store.paneState.setDocumentPanes(reader: true, agent: true, notes: true)
             try await until("original editor ready") {
                 guard !store.activeNoteIsLoading, store.activeNoteItemID == note.id,
                       let editor = await editor(documentID: store.activeNoteEditorDocumentID) else { return false }
@@ -912,6 +955,88 @@ enum CatalystBusinessCheck {
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             try check("original_editor_snapshot_and_note_write_gate", captured && (try String(contentsOf: persistedNote, encoding: .utf8)).contains(noteMarker))
 
+            let fileCommand = store.ui("导出笔记为 PDF…", "Export Note as PDF…")
+                .lowercased().replacingOccurrences(of: " ", with: "_")
+            func waitForPDFPreview() async throws {
+                // Intel's first accessibility snapshot can outlast the default
+                // control wait. Let pagination reach readiness or report an error.
+                try await until("note PDF preview completed", seconds: 360) {
+                    let control = try await accessibilityElement("note-pdf-save", forInteraction: true)
+                    if let failure = control?["render_error"] { throw Failure("note PDF: " + failure) }
+                    return control?["enabled"] == "true" && control?["hittable"] == "true"
+                }
+            }
+            func openPDFExport() async throws {
+                try await activate("com.apple.menu.file")
+                try await activate(fileCommand)
+                try await waitForPDFPreview()
+            }
+            _ = try await onboardingUICommand("screenshot", id: "Note before PDF export")
+            try await openPDFExport()
+            _ = try await onboardingUICommand("screenshot", id: "Note PDF export")
+            let pageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
+            try check("note_pdf_export_opens_in_app", store.notePDFExportRequest?.itemID == note.id
+                      && pageCount == store.ui("1 页", "1 page"))
+            do {
+                let language = store.interfaceLanguage
+                defer { store.setInterfaceLanguage(language) }
+                store.setInterfaceLanguage(.chinese)
+                try await until("Chinese labels appear in PDF export", seconds: 360) {
+                    try await accessibilityElement("note-pdf-page-count")?["label"] == "1 页"
+                }
+                let defaultLayout = try await accessibilityElement("note-pdf-layout-summary")?["label"]
+                let hiddenSizeControl = try await accessibilityElement("note-pdf-size") == nil
+                try check("note_pdf_export_defaults_to_preview_without_settings",
+                          hiddenSizeControl && defaultLayout == "A4 纵向 · 含页码")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Chinese")
+                try await activate("note-pdf-adjust-layout")
+                try await waitForOnboardingControl("note-pdf-size")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Style Chinese")
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "页面")
+                try await waitForOnboardingControl("note-pdf-logo")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Page Chinese")
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "样式")
+                try await waitForOnboardingControl("note-pdf-size")
+                let updatedPageCount = try await accessibilityElement("note-pdf-page-count")?["label"]
+                try check("note_pdf_export_switches_settings_in_place",
+                          store.notePDFExportRequest?.itemID == note.id && updatedPageCount == "1 页")
+                let initialSize = try await accessibilityElement("note-pdf-size")?["value"]
+                _ = try await onboardingUICommand("drag-slider", id: "note-pdf-size", value: "0.22,0.44")
+                try await until("PDF preview completed after dragging the size slider", seconds: 360) {
+                    let adjustedSize = try await accessibilityElement("note-pdf-size")?["value"]
+                    let saveButton = try await accessibilityElement("note-pdf-save", forInteraction: true)
+                    return initialSize != nil && adjustedSize != nil && adjustedSize != initialSize
+                        && saveButton?["enabled"] == "true" && saveButton?["hittable"] == "true"
+                }
+                try check("note_pdf_export_updates_preview_after_size_adjustment", true)
+                _ = try await onboardingUICommand("press", id: "note-pdf-settings", value: "页面")
+                _ = try await onboardingUICommand("press", id: "note-pdf-orientation", value: "横向")
+                try await activate("note-pdf-adjust-layout")
+                try await waitForPDFPreview()
+                let customLayout = try await accessibilityElement("note-pdf-layout-summary")?["label"]
+                try check("note_pdf_export_keeps_direct_choice_after_collapsing", customLayout == "A4 横向 · 含页码")
+                _ = try await onboardingUICommand("screenshot", id: "Note PDF export Landscape Chinese")
+            }
+            try await activate("note-pdf-cancel")
+            try await until("note PDF export sheet closed") { store.notePDFExportRequest == nil }
+            try check("note_pdf_export_keeps_note_selection", store.activeNoteItemID == note.id)
+
+            try await openPDFExport()
+            let exports = FileManager.default.temporaryDirectory
+                .appendingPathComponent("weibei-pdf-" + UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: exports) }
+            try await activate("note-pdf-save")
+            _ = try await onboardingUICommand("save-pdf", id: "note-pdf", value: exports.path)
+            try await until("system PDF save finished in the selected folder") {
+                let files = try FileManager.default.contentsOfDirectory(at: exports, includingPropertiesForKeys: nil)
+                guard let url = files.first(where: { $0.pathExtension == "pdf" }),
+                      let savedDocument = PDFDocument(url: url) else { return false }
+                let text = savedDocument.string?.precomposedStringWithCompatibilityMapping ?? ""
+                return store.notePDFExportRequest == nil && savedDocument.pageCount == 1 && text.contains("编辑器输入")
+            }
+            try check("note_pdf_export_saves_preview_to_disk", store.activeNoteItemID == note.id)
+
             let pdfURL = inputs.appendingPathComponent("bounded-worker.pdf")
             try UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 400, height: 500)).writePDF(to: pdfURL) { context in
                 context.beginPage()
@@ -923,7 +1048,8 @@ enum CatalystBusinessCheck {
             let attachmentDirectory = store.currentAttachmentDirectory!
             try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
             let imageURL = attachmentDirectory.appendingPathComponent("candidate-image.png")
-            try Data(contentsOf: Bundle.main.url(forResource: "landscape", withExtension: "png")!).write(to: imageURL, options: .atomic)
+            guard let image = LabFixture.landscapePNG else { throw Failure("candidate attachment fixture is invalid") }
+            try image.write(to: imageURL, options: .atomic)
             try await verifyConnectionOnboarding(store, endpoint: endpoint)
             try check("chat_inline_connection_cancel_retry_models_and_draft", true)
             let activeConnection = store.activeAgentProfileID
@@ -951,8 +1077,25 @@ enum CatalystBusinessCheck {
                 throw Failure("workspace window disappeared before opening settings")
             }
             let windowBoundsBeforeSettings = window.bounds
+            try await until("full-screen workspace controls are attached") {
+                workspaceScene.titlebar?.toolbar?.items.isEmpty == true && fullScreenToolbarHover(in: window) != nil
+            }
             try await verifyToolbarAutoHide(in: window, name: "native_toolbar_full_screen_auto_hide_stable_reading")
-            try await clickToolbar("weibei.actions")
+            guard let toolbar = workspaceScene.titlebar?.toolbar, let hover = fullScreenToolbarHover(in: window) else {
+                throw Failure("full-screen settings target unavailable")
+            }
+            let frame = hover.convert(hover.bounds, to: window)
+            let buttonInset = CGFloat(TopBarLeadingInset.value(isFullScreen: true))
+                + WeiBeiTopBarButton.width * store.interfaceTextScale.multiplier / 2
+            let settingsPoint = CGPoint(x: frame.maxX - buttonInset, y: frame.midY)
+            guard CatalystDesktopWindow.shared.postFullScreenToolbarPointerForCheck(
+                toolbar: toolbar, at: settingsPoint, click: false
+            ) else { throw Failure("full-screen settings hover unavailable") }
+            try await until("full-screen settings hover reaches the workspace") { hover.inside }
+            try await Task.sleep(for: .milliseconds(180))
+            guard CatalystDesktopWindow.shared.postFullScreenToolbarPointerForCheck(
+                toolbar: toolbar, at: settingsPoint, click: true
+            ) else { throw Failure("full-screen settings click unavailable") }
             try await until("connection cards inside the original workspace") {
                 store.settingsPresented && descendants(window).contains { $0.accessibilityIdentifier == "settings-panel-viewport" }
                     && !AgentAccountService.shared.isRefreshingModels
@@ -2024,7 +2167,7 @@ enum CatalystBusinessCheck {
         let images = LabImages()
         controller.setImages(images)
         _ = controller.store.setTheme(.weiBei(fontSize: bodySize, appearance: appearance))
-        let imageSource = "lab-image://landscape"
+        let imageSource = LabFixture.landscapeSource
         let imageMessage = AgentMessage(role: .assistant, text: "依据 " + source.label + "，继续推导。 ![合成图](\(imageSource))", source: nil, sources: [source])
         var session = StudySession(title: "引用与图片重绘")
         session.messages = [imageMessage]
@@ -2125,8 +2268,9 @@ enum CatalystBusinessCheck {
 
     private static func measureWorkspaceHistory(_ store: WorkspaceStore) async throws -> [String: Any] {
         guard let originalSession = store.activeStudySessionID else { throw Failure("missing original session") }
-        let originalLayout = store.layout
-        store.setLayout(.immersiveConversation)
+        let originalPanes = (reader: store.showReader, agent: store.showAgent, notes: store.showNotes)
+        store.paneState.setDocumentPanes(reader: false, agent: true, notes: false)
+        store.focus(.agent)
         guard store.createStudySession(courseID: nil) != nil else { throw Failure("history session creation") }
         let beforeController = conversation()
         let beforePreparation = beforeController?.store.preparationMS ?? [:]
@@ -2137,9 +2281,7 @@ enum CatalystBusinessCheck {
             conversation()?.messages.count == 240 && conversation()?.messages.last?.id == history.last?.id.uuidString
         }
         let controller = conversation()!
-        // The immersive host is a separate SwiftUI branch from the three-pane
-        // split; it must extend under the toolbar and carry the fade mask too.
-        try await until("immersive conversation pane fades within the original toolbar") {
+        try await until("single conversation pane fades within the original toolbar") {
             guard let window = controller.collection.window,
                   let pane = descendants(window).compactMap({ $0 as? PersistentPaneHost.Container })
                       .first(where: { !$0.isHidden && $0.bounds.width > 0 }),
@@ -2212,7 +2354,7 @@ enum CatalystBusinessCheck {
         measured["long_answer_blocks"] = controller.messages.last!.blocks.count
         measured["resident_memory_bytes"] = LabMetrics.residentMemory()
         _ = store.activateStudySession(originalSession, expectedCourseID: nil, expectedScopeNeedsReview: false)
-        store.setLayout(originalLayout)
+        store.paneState.setDocumentPanes(reader: originalPanes.reader, agent: originalPanes.agent, notes: originalPanes.notes)
         return measured
     }
 

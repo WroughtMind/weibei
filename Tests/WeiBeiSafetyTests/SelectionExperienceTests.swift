@@ -7,6 +7,118 @@ import WeiBeiCore
 
 final class SelectionExperienceTests: XCTestCase {
     @MainActor
+    func testReaderTabsSwitchAndCloseWithReadingProgress() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        let pdf = StudyItem(id: "paper", title: "Paper", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let markdown = StudyItem(id: "outline", title: "Outline", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        let extra = StudyItem(id: "example", title: "Example", subtitle: "", kind: .text, urlPath: nil, isSample: false)
+        store.importedItems = [pdf, markdown, extra]
+
+        store.openContextualItem(pdf.id, kind: .material)
+        store.updateReaderPageIndex(6)
+        store.openContextualItem(markdown.id, kind: .material)
+        store.updateReaderHTMLLocation(id: "markdown-heading-3", title: "Results", reason: "scroll")
+        store.select(itemID: extra.id)
+        store.showContextualBrowser(.material)
+        store.selectReaderTab(pdf.id)
+
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [pdf.id, markdown.id, extra.id])
+        XCTAssertEqual(store.selectedMaterialItem?.id, pdf.id)
+        XCTAssertEqual(store.readerTargetPageIndex, 6)
+        XCTAssertFalse(store.materialPickerPresented)
+
+        store.closeReaderTab(extra.id)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [pdf.id, markdown.id])
+        XCTAssertEqual(store.selectedMaterialItem?.id, pdf.id)
+        store.closeReaderTab(pdf.id)
+        XCTAssertEqual(store.selectedMaterialItem?.id, markdown.id)
+        XCTAssertEqual(store.readerTargetLocationID, "markdown-heading-3")
+
+        store.openContextualItem(pdf.id, kind: .material)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [markdown.id, pdf.id])
+        XCTAssertEqual(store.readerTargetPageIndex, 6)
+        store.closeReaderTab(pdf.id)
+        XCTAssertEqual(store.selectedMaterialItem?.id, markdown.id)
+
+        store.closeReaderTab(markdown.id)
+        XCTAssertTrue(store.readerTabMaterials.isEmpty)
+        XCTAssertNil(store.selectedMaterialItem)
+        XCTAssertTrue(store.showReader)
+        XCTAssertEqual(store.courseMaterials, [pdf, markdown, extra])
+    }
+
+    @MainActor
+    func testReaderTabsPersistAcrossReloadAndMigrateItemIDs() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let a = StudyItem(id: "mat-a", title: "Alpha", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        let b = StudyItem(id: "mat-b", title: "Beta", subtitle: "", kind: .markdown, urlPath: nil, isSample: false)
+        let c = StudyItem(id: "mat-c", title: "Gamma", subtitle: "", kind: .text, urlPath: nil, isSample: false)
+
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.importedItems = [a, b, c]
+        store.openContextualItem(a.id, kind: .material)
+        store.openContextualItem(b.id, kind: .material)
+        store.openContextualItem(c.id, kind: .material)
+        store.closeReaderTab(b.id)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [a.id, c.id])
+
+        let renamedA = StudyItem(id: "mat-a-renamed", title: "Alpha", subtitle: "", kind: .pdf, urlPath: nil, isSample: false)
+        store.importedItems = [renamedA, b, c]
+        store.replaceItemIDEverywhere(a.id, with: renamedA.id)
+        XCTAssertTrue(store.flushPendingWorkspaceSave())
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [renamedA.id, c.id])
+
+        let reloaded = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: false, startsCourseFileMaintenance: false)
+        XCTAssertEqual(reloaded.readerTabMaterials.map(\.id), [renamedA.id, c.id])
+        XCTAssertEqual(reloaded.selectedMaterialItem?.id, c.id)
+    }
+
+    @MainActor
+    func testReaderTabsIsolateByActiveCourseAndFormatProgress() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let courseA = Course(title: "Algebra")
+        let courseB = Course(title: "Topology")
+        let a1 = StudyItem(
+            id: "a1", title: "Spectral", subtitle: "", kind: .pdf, urlPath: nil, isSample: false,
+            storage: .courseOwned(ownerCourseID: courseA.id, relativePath: "Materials/Spectral.pdf")
+        )
+        let a2 = StudyItem(
+            id: "a2", title: "SVD", subtitle: "", kind: .markdown, urlPath: nil, isSample: false,
+            storage: .courseOwned(ownerCourseID: courseA.id, relativePath: "Materials/SVD.md")
+        )
+        let b1 = StudyItem(
+            id: "b1", title: "Covering", subtitle: "", kind: .pdf, urlPath: nil, isSample: false,
+            storage: .courseOwned(ownerCourseID: courseB.id, relativePath: "Materials/Covering.pdf")
+        )
+
+        let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
+        store.courses = [courseA, courseB]
+        store.importedItems = [a1, a2, b1]
+
+        store.activeCourseID = courseA.id
+        store.openContextualItem(a1.id, kind: .material)
+        store.updateReaderPageIndex(4)
+        store.openContextualItem(a2.id, kind: .material)
+        store.updateReaderHTMLLocation(id: "sec-2", title: "Eckart–Young，章节标识：sec-2", reason: "scroll")
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [a1.id, a2.id])
+
+        store.activeCourseID = courseB.id
+        store.openContextualItem(b1.id, kind: .material)
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [b1.id])
+
+        store.activeCourseID = courseA.id
+        XCTAssertEqual(store.readerTabMaterials.map(\.id), [a1.id, a2.id])
+        XCTAssertEqual(store.readerTabProgressSummary(for: a1), store.ui("第 5 页", "Page 5"))
+        XCTAssertEqual(store.readerTabProgressSummary(for: a2), "Eckart–Young")
+    }
+
+    @MainActor
     func testMarkdownReadingLocationReachesQuestionAndRestoresAfterReselect() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -177,7 +289,6 @@ final class SelectionExperienceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        store.layout = .documentAgentNotes
         store.showAgent = true
         store.updateSelection("刚选中的原文", source: .document, anchor: SelectionPopoverAnchor(x: 200, y: 100))
         XCTAssertEqual(store.selectionAttachments.count, 1)
@@ -195,7 +306,6 @@ final class SelectionExperienceTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        store.layout = .documentAgentNotes
         store.showAgent = true
         let manual = SelectionContext(text: "手动保留的另一段", source: .note, ownerTitle: "笔记")
         store.addSelectionAttachment(manual)
@@ -270,7 +380,7 @@ final class SelectionExperienceTests: XCTestCase {
         store.selfCheckAgentResponder = { request in
             submitted = request
             store.addConversationQuote("发送之后新选的内容", messageID: nil, in: sessionID)
-            return StudyAgentReply(text: "解释结果", backend: .native)
+            return StudyAgentReply(text: "解释结果")
         }
         store.submitAgentDraft(sessionID: sessionID)
         let done = expectation(description: "quoted context submitted")
@@ -358,7 +468,6 @@ final class SelectionExperienceTests: XCTestCase {
         store.agentReasoningMappings[store.agentReasoningMappingKey(.think)] = "max"
         store.agentReasoningMappings[store.agentReasoningMappingKey(.flash)] = "medium"
         let mainID = try XCTUnwrap(store.createStudySession(courseID: nil)?.id)
-        store.layout = .documentAgentNotes
         store.showAgent = true
         store.selectedItemID = "document-a"
         store.saveComposerDraft("主会话未发送的草稿", for: mainID)
@@ -375,7 +484,7 @@ final class SelectionExperienceTests: XCTestCase {
         var submitted: StudyAgentRequest?
         store.selfCheckAgentResponder = { request in
             submitted = request
-            return StudyAgentReply(text: "公式 A 的解释", backend: .native)
+            return StudyAgentReply(text: "公式 A 的解释")
         }
         store.submitAgentDraft(sessionID: firstID)
         let done = expectation(description: "independent question persisted")
@@ -520,17 +629,17 @@ final class SelectionExperienceTests: XCTestCase {
     }
 
     @MainActor
-    func testAskKeepsThePassageAndFloatingInputInEveryReadingLayout() {
+    func testAskKeepsThePassageAndFloatingInputWithOrWithoutChatPane() {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = WorkspaceStore(workspaceDirectory: root, startsAtBlankEntries: true, startsCourseFileMaintenance: false)
-        for layout in [WorkspaceLayout.immersiveReading, .documentAgentNotes] {
-            store.layout = layout
-            store.showAgent = true
+        for showChat in [false, true] {
+            store.paneState.setDocumentPanes(reader: true, agent: showChat, notes: false)
+            let order = store.visibleDocumentPaneOrder
             let anchor = SelectionPopoverAnchor(x: 320, y: 210)
             store.updateSelection("原处提问", source: .document, anchor: anchor)
             store.askSelection()
-            XCTAssertEqual(store.layout, layout)
+            XCTAssertEqual(store.visibleDocumentPaneOrder, order)
             XCTAssertEqual(store.agentSurface, .selectionFloat)
             XCTAssertEqual(store.selectionAnchor, anchor)
             XCTAssertTrue(store.keepFloatingSelectionForAnswer)

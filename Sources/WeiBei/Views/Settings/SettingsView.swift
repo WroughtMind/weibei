@@ -115,7 +115,8 @@ struct SettingsView: View {
     @State private var feedbackDragOffset: CGSize = .zero
     @State private var feedbackTitle = ""
     @State private var feedbackBody = ""
-    @State private var feedbackBusy = false
+    @State private var openingFeedback: UUID?
+    private var feedbackBusy: Bool { openingFeedback != nil }
     @State private var feedbackStatus: String?
     // 资料库位置迁移（计划 §4.1）。
     @State private var pendingMigrationDestination: URL?
@@ -162,7 +163,10 @@ struct SettingsView: View {
                     feedbackSheet
                         .offset(feedbackDragOffset)
                         .transition(WeiBeiTransition.floating)
-                        .onDisappear { feedbackDragOffset = .zero }
+                        .onDisappear {
+                            feedbackDragOffset = .zero
+                            openingFeedback = nil
+                        }
                         .gesture(
                             DragGesture(minimumDistance: 5)
                                 .onChanged { value in
@@ -1074,7 +1078,7 @@ struct SettingsView: View {
                     if feedbackBusy {
                         ProgressView().controlSize(.small)
                     } else {
-                        Text(store.ui("提交", "Submit"))
+                        Text(store.ui("在 GitHub 打开草稿", "Open Draft on GitHub"))
                     }
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
@@ -1099,17 +1103,18 @@ struct SettingsView: View {
     private func submitFeedback() async {
         let title = feedbackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = feedbackBody.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, !body.isEmpty else { return }
+        guard !feedbackBusy, !title.isEmpty, !body.isEmpty else { return }
 
-        feedbackBusy = true
+        let requestID = UUID()
+        openingFeedback = requestID
         feedbackStatus = store.ui("正在打开反馈页…", "Opening the feedback page…")
         let fullBody = feedbackIssueBody(userBody: body)
-        openPrefilledFeedbackIssue(title: title, body: fullBody)
-        feedbackBusy = false
-        feedbackStatus = store.ui(
-            "已打开 Codeberg 反馈页，标题和说明已填好，确认后即可发送。",
-            "Opened the Codeberg feedback page with the title and report filled in. Confirm there to send."
-        )
+        let opened = await openPrefilledFeedbackIssue(title: title, body: fullBody)
+        guard openingFeedback == requestID else { return }
+        openingFeedback = nil
+        feedbackStatus = opened
+            ? store.ui("已打开 GitHub 草稿。请在浏览器里确认并发送。", "Your GitHub draft is open. Review and submit it in your browser.")
+            : store.ui("未能打开反馈页。标题和说明已保留，可以重试。", "Couldn’t open the feedback page. Your title and report are still here. Try again.")
     }
 
     private func feedbackIssueBody(userBody: String) -> String {
@@ -1125,12 +1130,13 @@ struct SettingsView: View {
         """
     }
 
-    private func openPrefilledFeedbackIssue(title: String, body: String) {
-        guard let url = WeiBeiFeedbackLink.prefilled(title: title, body: body) else { return }
+    @MainActor
+    private func openPrefilledFeedbackIssue(title: String, body: String) async -> Bool {
+        guard let url = WeiBeiFeedbackLink.prefilled(title: title, body: body) else { return false }
 #if targetEnvironment(macCatalyst)
-        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        return await UIApplication.shared.open(url, options: [:])
 #else
-        NSWorkspace.shared.open(url)
+        return NSWorkspace.shared.open(url)
 #endif
     }
 
@@ -1273,32 +1279,7 @@ struct SettingsView: View {
 
     /// Shared compact dropdown — hugs label width, no forced wide track.
     func compactMenu<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        Menu {
-            content()
-        } label: {
-            HStack(spacing: 5) {
-                Text(title)
-                    .font(SettingsType.menu)
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .weiBeiText(9.5, weight: .bold)
-            }
-            .foregroundStyle(WeiBeiTheme.ink)
-            .padding(.horizontal, 9)
-            .frame(height: 26)
-            .weibeiEtchedBackground(
-                fill: WeiBeiTheme.paperRaised.opacity(0.52),
-                stroke: WeiBeiTheme.hairline.opacity(0.3),
-                cornerRadius: 8
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .fixedSize(horizontal: true, vertical: true)
+        WeiBeiCompactMenu(title: title, content: content)
     }
 
     /// Shared Settings group title label.
@@ -1383,4 +1364,43 @@ private enum SettingsType {
     static let detail: Font = .system(size: 12, weight: .regular)
     static let pill: Font = .system(size: 12, weight: .medium)
     static let menu: Font = .system(size: 13, weight: .semibold)
+}
+
+struct WeiBeiCompactMenu<Content: View>: View {
+    let title: String
+    private let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        Menu {
+            content
+        } label: {
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(SettingsType.menu)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .weiBeiText(9.5, weight: .bold)
+            }
+            .foregroundStyle(WeiBeiTheme.ink)
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .weibeiEtchedBackground(
+                fill: WeiBeiTheme.paperRaised.opacity(0.52),
+                stroke: WeiBeiTheme.hairline.opacity(0.3),
+                cornerRadius: 8
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: true)
+    }
 }

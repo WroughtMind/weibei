@@ -83,7 +83,8 @@ for url in sorted(expected):
         image_language = 'en' if language == 'en' else 'zh'
         prefix = f'/weibei/assets/labs/{image_language}/'
         previews = nodes(document, 'a', **{'class': 'lab-preview'})
-        assert len(previews) == 3, f'{url}: missing project preview'
+        projects = nodes(document, 'article', **{'class': 'lab-item'})
+        assert projects and len(previews) == len(projects), f'{url}: missing project preview'
         for preview in previews:
             image = next(n for n in preview.walk() if n.tag == 'img')
             assert image.attrs.get('sizes'), f'{url}: missing responsive image sizing'

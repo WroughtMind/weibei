@@ -120,17 +120,6 @@ final class WorkspacePaneState: ObservableObject {
     }
     @Published var focusRequest = 0
 
-    /// Collapse/expand notes+agent with a single `objectWillChange` (was two store publishes).
-    func setRightPaneVisible(_ visible: Bool) {
-        guard showNotesValue != visible || showAgentValue != visible else { return }
-        objectWillChange.send()
-        suppressPublish = true
-        showNotesValue = visible
-        showAgentValue = visible
-        suppressPublish = false
-        centersInitialAgentComposer = false
-    }
-
     /// Apply multi-pane visibility with a single publish.
     func setDocumentPanes(reader: Bool, agent: Bool, notes: Bool) {
         guard showReaderValue != reader

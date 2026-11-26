@@ -10,6 +10,8 @@ import tempfile
 
 import yaml
 
+from ci_native_reuse import STAMP
+
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = yaml.safe_load((ROOT / '.github/workflows/pr-checks.yml').read_text())
 JOBS = WORKFLOW['jobs']
@@ -39,6 +41,7 @@ def condition(expression, context):
 
 
 def selected(scopes, full=False, event='pull_request', jobs=JOBS, publish=False, candidate_run='', diagnostic=''):
+    scopes = {'native_reuse_run': '', **scopes}
     results, active_steps, pending = {}, {}, dict(jobs)
     while pending:
         for key, job in list(pending.items()):
@@ -50,7 +53,7 @@ def selected(scopes, full=False, event='pull_request', jobs=JOBS, publish=False,
             context = {
                 'github': {'event_name': event}, 'inputs': {'full_suite': full, 'publish': publish, 'candidate_run': candidate_run, 'diagnostic_scenario': diagnostic},
                 'needs': {dep: {'result': results[dep], 'outputs': scopes} for dep in dependencies},
-                'steps': {step['id']: {'outcome': 'success'} for step in job.get('steps', []) if 'id' in step},
+                'steps': {step['id']: {'outcome': 'success', 'outputs': scopes} for step in job.get('steps', []) if 'id' in step},
             }
             expr = job.get('if', True)
             deps_ok = all(results[dep] == 'success' for dep in dependencies)
@@ -84,19 +87,21 @@ with tempfile.TemporaryDirectory() as directory:
         ('官网', ['website/style.css', '.github/workflows/pages.yml'], {'website-check'}),
         ('发布说明和设计文档', ['Docs/releases/README.md', 'DesignSystem/README.md', 'LICENSE'], set()),
         ('工具测试', ['script/homebrew/generate_cask.test.mjs'], {'tools-check'}),
-        ('GenUI 构建', ['script/build_genui.mjs'], {'app-check', 'catalyst-check'}),
+        ('GenUI 构建', ['script/build_genui.mjs'], {'editor-check', 'catalyst-check'}),
         ('检查编排', ['.github/workflows/pr-checks.yml', 'script/check_ci_routing.py'], set()),
-        ('官网与应用混合', ['website/app.js', 'Sources/WeiBei/Stores/WorkspaceStore.swift'], {'website-check', 'app-check', 'catalyst-check'}),
+        ('官网与应用混合', ['website/app.js', 'Sources/WeiBei/Stores/WorkspaceStore.swift'], {'website-check', 'app-check', 'editor-check', 'catalyst-check'}),
         ('正式会话代码', ['App/Sources/ConversationController.swift'], {'catalyst-check'}),
         ('应用自检启动器', ['script/run_self_check.py'], {'app-check', 'catalyst-check'}),
         ('原生窗口组件', ['App/WindowBridge/NativeWindowBridge.swift'], {'catalyst-check'}),
-        ('原生启动与共享业务', ['App/Sources/AppDelegate.swift'], {'app-check', 'catalyst-check'}),
+        ('原生启动与共享业务', ['App/Sources/AppDelegate.swift'], {'app-check', 'editor-check', 'catalyst-check'}),
         ('原生与共享代码混合', ['App/Sources/ConversationController.swift', 'Sources/WeiBeiCore/StudyAgentRuntime.swift'], {'app-check', 'catalyst-check'}),
         ('正式工程配置', ['App/project.yml'], {'catalyst-check'}),
-        ('编辑器配置', ['tsconfig.editor.json'], {'app-check', 'catalyst-check'}),
-        ('字体原件', ['DesignSystem/assets/fonts/Mplus1p-Light.ttf'], {'app-check', 'catalyst-check'}),
-        ('字体生成工具', ['script/convert_editor_fonts.py'], {'app-check', 'catalyst-check'}),
-        ('字体工具依赖', ['script/editor-font-requirements.txt'], {'app-check', 'catalyst-check'}),
+        ('编辑器专用测试', ['Sources/WeiBeiWebEditorCheck/main.swift', 'Sources/WeiBei/WebEditor/test/selection.test.ts'], {'editor-check', 'catalyst-check'}),
+        ('编辑器生产代码', ['Sources/WeiBei/WebEditor/src/editor.ts'], {'app-check', 'editor-check', 'catalyst-check'}),
+        ('编辑器配置', ['tsconfig.editor.json'], {'editor-check', 'catalyst-check'}),
+        ('字体原件', ['DesignSystem/assets/fonts/Mplus1p-Light.ttf'], {'editor-check', 'catalyst-check'}),
+        ('字体生成工具', ['script/convert_editor_fonts.py'], {'editor-check', 'catalyst-check'}),
+        ('字体工具依赖', ['script/editor-font-requirements.txt'], {'editor-check', 'catalyst-check'}),
         ('缓存输入', ['.github/actions/catalyst-cache/action.yml', 'script/ci_cache_key.py'], {'catalyst-check'}),
         ('编译复用检查', ['script/check_build_reuse.py'], {'catalyst-check'}),
         ('发布接力', ['script/release.py', 'script/release_candidate.py', 'script/verify_public_release.py'], set()),
@@ -109,7 +114,7 @@ with tempfile.TemporaryDirectory() as directory:
         ('安装包体积政策回归', ['script/check_package_size_policy.py'], {'catalyst-check'}),
         ('会话验收脚本', ['App/script/check-ci.sh'], {'catalyst-check'}),
         ('图标生成工具', ['DesignSystem/scripts/build-icns.ts'], {'tools-check', 'catalyst-check'}),
-        ('依赖清单', ['package.json'], {'tools-check', 'app-check', 'catalyst-check'}),
+        ('依赖清单', ['package.json'], {'tools-check', 'app-check', 'editor-check', 'catalyst-check'}),
     ]
     for label, paths, expected in scenarios:
         base = git('rev-parse', 'HEAD')
@@ -126,13 +131,16 @@ with tempfile.TemporaryDirectory() as directory:
         if scopes['code'] == 'true':
             require_steps(jobs, steps, 'app-check', {'compile', 'core', 'dev'})
         if any(scopes[k] == 'true' for k in ['code', 'editor', 'release', 'acceptance']):
-            require_steps(jobs, steps, 'catalyst-check', {'dependencies', 'compile', 'launch'})
+            require_steps(jobs, steps, 'scope', {'native'})
+            require_steps(jobs, steps, 'catalyst-check', {'input_stamp', 'dependencies', 'compile', 'launch'})
+        else:
+            assert 'native' not in steps['scope'], label
         if scopes['acceptance'] == 'true':
             require_steps(jobs, steps, 'catalyst-check', {'native_full_screen', 'acceptance', 'reuse'})
         elif 'catalyst-check' in jobs:
             assert not {'native_full_screen', 'acceptance', 'reuse'} & steps['catalyst-check'], label
         if scopes['editor'] == 'true':
-            require_steps(jobs, steps, 'app-check', {'dependencies', 'editor'})
+            require_steps(jobs, steps, 'editor-check', {'dependencies', 'editor', 'cleanliness'})
         if scopes['agent'] == 'true' or scopes['data_safety'] == 'true':
             require_steps(jobs, steps, 'app-check', {'safety'})
         if scopes['tools'] == 'true':
@@ -144,8 +152,21 @@ with tempfile.TemporaryDirectory() as directory:
         if label == '官网':
             manual_jobs, manual_steps = selected(scopes, True, 'workflow_dispatch')
             assert manual_jobs == set(JOBS) - {'diagnostic'}, '手动完整检查必须保留全部验证'
-            require_steps(manual_jobs, manual_steps, 'app-check', {'compile', 'core', 'dev', 'dependencies', 'editor', 'safety'})
+            require_steps(manual_jobs, manual_steps, 'app-check', {'compile', 'core', 'dev', 'safety'})
+            require_steps(manual_jobs, manual_steps, 'editor-check', {'dependencies', 'editor', 'cleanliness'})
+            assert 'native' not in manual_steps['scope']
+        if label == '编辑器专用测试':
+            reused_jobs, _ = selected({**scopes, 'native_reuse_run': '123'})
+            assert reused_jobs == {'scope', 'editor-check', 'fast-check'}, reused_jobs
+            manual_jobs, _ = selected({**scopes, 'native_reuse_run': '123'}, True, 'workflow_dispatch')
+            assert 'catalyst-check' in manual_jobs
         print(f'{label}: 任务与必要步骤正确')
+
+    base = git('rev-parse', 'HEAD')
+    git('mv', 'Sources/WeiBeiCore/StudyAgentRuntime.swift', 'Sources/WeiBei/WebEditor/test/renamed.swift')
+    git('-c', 'user.name=CI Check', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'move a production source into test scope')
+    output = subprocess.check_output(['bash', str(ROOT / 'script/ci_changed_scopes.sh'), base, 'HEAD'], cwd=directory, text=True)
+    assert 'code=true' in output.splitlines(), '移走原有应用代码仍需触发编译'
 
 # 定向诊断只运行选择的架构/场景，不覆盖 PR 门禁或启动完整检查。
 for scenario in ('picker', 'conversation', 'business'):
@@ -165,11 +186,13 @@ else:
     raise AssertionError('回归检查没有发现编译步骤被关闭')
 
 # 两种架构只共享范围判断，不再先排队等另一种架构完成。
-assert JOBS['app-check']['needs'] == JOBS['catalyst-check']['needs'] == 'scope'
+assert JOBS['app-check']['needs'] == JOBS['editor-check']['needs'] == JOBS['catalyst-check']['needs'] == 'scope'
 assert JOBS['catalyst-check']['strategy']['matrix']['include'] == [
     {'arch': 'arm64', 'runner': 'macos-26'},
     {'arch': 'x86_64', 'runner': 'macos-26-intel'},
 ]
+stamp_step = next(step for step in JOBS['catalyst-check']['steps'] if step.get('id') == 'input_stamp')
+assert stamp_step['name'] == STAMP + '${{ needs.scope.outputs.native_input_key }}'
 # 已验证最新主线组合的 PR 合入后不再重复启动应用检查。
 assert 'push' not in WORKFLOW.get('on', WORKFLOW.get(True, {}))
 
@@ -188,6 +211,23 @@ for failed_job in [None, *gate['needs']]:
         env = {**os.environ, 'RESULTS': json.dumps(results), 'FULL_SUITE': 'false', 'EVENT_NAME': 'pull_request'}
         run = subprocess.run(['bash', '-e', '-c', gate['steps'][0]['run']], env=env, capture_output=True)
         assert (run.returncode == 0) == (failed_job is None), (failed_job, outcome)
+
+for event, reused_run, native_result, editor_result, expected in [
+    ('pull_request', '123', 'skipped', 'success', True),
+    ('pull_request', '123', 'failure', 'success', False),
+    ('pull_request', '123', 'cancelled', 'success', False),
+    ('pull_request', '123', 'skipped', 'failure', False),
+    ('pull_request', '123', 'skipped', 'skipped', False),
+    ('pull_request', 'unknown', 'skipped', 'success', False),
+    ('workflow_dispatch', '123', 'skipped', 'success', False),
+]:
+    results = {name: {'result': 'success', 'outputs': {}} for name in gate['needs']}
+    results['scope']['outputs'] = {**outputs, 'native_reuse_run': reused_run}
+    results['catalyst-check']['result'] = native_result
+    results['editor-check']['result'] = editor_result
+    env = {**os.environ, 'RESULTS': json.dumps(results), 'FULL_SUITE': 'true', 'EVENT_NAME': event}
+    run = subprocess.run(['bash', '-e', '-c', gate['steps'][0]['run']], env=env, capture_output=True)
+    assert (run.returncode == 0) == expected, (event, reused_run, native_result, editor_result)
 
 # 发布流程成功后刷新官网，失败/取消/非主线不能触发部署。
 trigger = PAGES.get('on', PAGES.get(True, {}))['workflow_run']

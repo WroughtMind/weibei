@@ -26,10 +26,7 @@ func checkWorkspaceSafetyScenes() throws {
             ),
         ],
         relatedCourseIDs: [targetCourseID, otherCourseID],
-        flow: StudyFlowState(
-            phase: .plan,
-            suggestedNext: ["legacy flow suggestion no longer feeds next step"]
-        )
+        flow: StudyFlowState(phase: .plan)
     )
     let highlights = CourseHomeLearningHighlights(
         courseID: targetCourseID,
@@ -48,7 +45,7 @@ func checkWorkspaceSafetyScenes() throws {
     )
     expect(
         legacyOnlyHighlights.nextStepText == nil,
-        "legacy flow.suggestedNext values no longer surface as the course-home next step"
+        "without a next-step memory the course home has no suggested action"
     )
 
     let material = StudyItem(
@@ -68,33 +65,6 @@ func checkWorkspaceSafetyScenes() throws {
         isSample: false,
         isNotebookNote: true
     )
-    let summary = CourseWorkspaceSummary(
-        importedItems: [material, note],
-        noteSourceLinks: [
-            NoteSourceLink(noteItemID: note.id, sourceItemID: material.id),
-        ],
-        studyLocationsByItemID: [
-            material.id: StudyLocation(
-                itemID: material.id,
-                itemTitle: material.title,
-                pageIndex: 2,
-                lastStudiedAt: Date(timeIntervalSince1970: 1_700_000_050)
-            ),
-        ],
-        studySessions: [session],
-        learningMemoryEntries: []
-    )
-    expect(
-        summary.materialCount == 1
-            && summary.noteCount == 1
-            && summary.explicitLinkCount == 1
-            && summary.readingPositionCount == 1
-            && summary.unlinkedMaterialCount == 0
-            && summary.unlinkedNoteCount == 0
-            && summary.studySessionCount == 1,
-        "course workspace summary counts persisted materials, notes, links, and chats"
-    )
-
     let libraryIdentity = ImportedFileIdentity(
         volumeID: 1,
         fileID: 2,
@@ -103,7 +73,6 @@ func checkWorkspaceSafetyScenes() throws {
     )
     let course = Course(
         title: "货币银行学",
-        sourceRootPath: "/tmp/WeiBei-security-hardening-web/test",
         sourceRootRelativePath: "test",
         sourceRootIdentity: libraryIdentity,
         createdAt: Date(timeIntervalSince1970: 1_700_000_000),

@@ -490,7 +490,7 @@ final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler, URLSession
     }
 }
 
-private enum MarkdownWebNetworkGuard {
+enum MarkdownWebNetworkGuard {
     private static let identifier = "com.changfenhuang.weibei.markdown.block-network.v1"
     private static let rules = """
     [
@@ -750,6 +750,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     /// JSON array of `{id,text}` for remark marks — 句末朱砂短棒(记过)。
     var selectionRemarkMarks: String = "[]"
     var onSelectionRemarkMark: (String, SelectionPopoverAnchor?) -> Void = { _, _ in }
+    var translationContext: ReaderTranslationContext?
+    var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
     private static let localImageScheme = "weibeiimage"
     private let customAccent = WeiBeiThemeRuntime.customAccent
 
@@ -939,6 +941,8 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
     private func updateWebView(_ view: WKWebView, context: Context) {
         view.isHidden = hidesHostedDocument
+        context.coordinator.translationContext = isEditable || hidesHostedDocument ? nil : translationContext
+        context.coordinator.onTranslationStatus = onTranslationStatus
         (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = markdown
@@ -1072,9 +1076,11 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
         }
 
         context.coordinator.runPendingCommandIfReady()
+        context.coordinator.updateTranslation(in: view)
     }
 
     private static func dismantleWebView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.translation.stop(in: view)
         coordinator.rejectUnconfirmedContentCommands()
         coordinator.unbindEditingSession()
         coordinator.imageSchemeHandler.invalidate()
@@ -1164,6 +1170,9 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        let translation = ReaderWebTranslation()
+        var translationContext: ReaderTranslationContext?
+        var onTranslationStatus: (ReaderTranslationStatus) -> Void = { _ in }
         var markdown: String
         var command: Binding<NoteEditorCommand?>
         var editingSession: NoteEditingSession?
@@ -1323,7 +1332,12 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
 
         func bindEditingSession() {
             guard let editingSession, editingSessionBindingToken == nil else { return }
-            editingSessionBindingToken = editingSession.bindSnapshotRequestHandler { [weak self] request in
+            editingSessionBindingToken = editingSession.bindSnapshotRequestHandler(compactTypography: { [weak self] in
+                guard let view = self?.webView, view.window != nil else { return nil }
+                return try? await view.evaluateJavaScript(
+                    "matchMedia(document.getElementById('compact-note-typography').media).matches"
+                ) as? Bool
+            }) { [weak self] request in
                 self?.dispatchV2(request)
             }
         }
@@ -1463,6 +1477,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             finalizedRenderGeneration &+= 1
             pendingFinalizedRenderGeneration = nil
             isReady = false
+            if let webView { translation.stop(in: webView) }
             rejectUnconfirmedContentCommands()
             onRenderFailure()
         }
@@ -1530,6 +1545,7 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
                 applySelectionAskMarks(force: true)
                 applySelectionRemarkMarks(force: true)
                 runPendingCommandIfReady()
+                if let webView { updateTranslation(in: webView) }
                 onRenderReady()
             case "dirtyChanged":
                 guard let event = decodeV2Event(NoteEditorDirtyChangedEvent.self, from: message.body) else { return }
@@ -1698,6 +1714,12 @@ struct RichMarkdownEditorView: MarkdownEditorRepresentable {
             pendingFinalizedRenderGeneration = nil
             webMarkdown = text
             evaluate("window.WeiBeiEditor?.setMarkdown(\(Self.json(text)))")
+        }
+
+        func updateTranslation(in view: WKWebView) {
+            translation.update(in: view, context: isReady && !isEditable ? translationContext : nil,
+                               rootSelector: "#editor .ProseMirror", snapshotImportedHTML: false,
+                               onStatus: onTranslationStatus)
         }
 
         func updateStreamingMarkdown(_ text: String) {

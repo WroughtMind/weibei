@@ -84,23 +84,6 @@ extension WorkspaceStore {
         courseSidebarTags.replacedNoteDrafts(keeping: Set(drafts.keys))
     }
 
-    func promptRenameNotebookNote(itemID: String) {
-        guard let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
-        notebookCreationDraft = nil
-        notebookRenameDraft = NotebookRenameDraft(itemID: item.id, title: displayTitle(for: item))
-        showLibrary = true
-        focus(.library)
-    }
-
-    func cancelRenameNotebookNote() {
-        notebookRenameDraft = nil
-    }
-
-    func confirmRenameNotebookNote() {
-        guard let draft = notebookRenameDraft else { return }
-        renameNotebookNote(itemID: draft.itemID, to: draft.title)
-    }
-
     @discardableResult
     func renameNotebookNote(itemID: String, to rawTitle: String) -> Task<Void, Never>? {
         guard !notebookRenameInFlight else { return nil }
@@ -156,9 +139,6 @@ extension WorkspaceStore {
         let willRewriteMarkdown = diskMarkdown != nil && retitledMarkdown != sourceMarkdown
         let originalIdentity = oldItem.importedFileIdentity
             ?? importedFileIdentityResolver(oldURL)
-        let replacementItemID = oldID.hasPrefix("file:") && originalIdentity != nil
-            ? Self.makeImportedItemID()
-            : (oldID.hasPrefix("file:") ? "file:\(newURL.path)" : oldID)
 
         // S3：无 journal。若覆盖同路径标题改写，先入备份环。
         if willRewriteMarkdown, FileManager.default.fileExists(atPath: oldURL.path) {
@@ -193,7 +173,7 @@ extension WorkspaceStore {
                    !CourseProjectPathPolicy.isSame(oldURL, newURL) {
                     _ = try NoteBackupRing.capture(
                         sourceURL: newURL,
-                        itemID: replacementItemID,
+                        itemID: oldID,
                         rootURL: noteBackupRootURL
                     )
                 }
@@ -258,27 +238,24 @@ extension WorkspaceStore {
                 ?? expectedOutputDigest
             let coordinatedIdentity = importedFileIdentityResolver(newURL)
             var renamedItem = oldItem
-            renamedItem.id = replacementItemID
             renamedItem.title = newTitle
             renamedItem.subtitle = newURL.lastPathComponent
             renamedItem.urlPath = newURL.path
             // 身份只认当前真实文件；解析失败不得沿用旧 identity 污染对账。
             renamedItem.importedFileIdentity = coordinatedIdentity
             importedItems[index] = renamedItem
-            replaceItemIDEverywhere(oldID, with: replacementItemID)
             if wasActiveNotebook {
-                noteText = self.retitledMarkdown(notesByItemID[replacementItemID] ?? sourceMarkdown, from: oldTitle, to: newTitle)
+                noteText = self.retitledMarkdown(notesByItemID[oldID] ?? sourceMarkdown, from: oldTitle, to: newTitle)
             }
-            if let cached = notesByItemID[replacementItemID] {
+            if let cached = notesByItemID[oldID] {
                 setNoteDraft(
                     self.retitledMarkdown(cached, from: oldTitle, to: newTitle),
-                    for: replacementItemID
+                    for: oldID
                 )
             }
-            noteBackingContentDigestsByItemID[replacementItemID] = finalDigest
+            noteBackingContentDigestsByItemID[oldID] = finalDigest
             courseDocumentSearchIndex.synchronize(allItems)
             _ = await persistWorkspaceNow()
-            notebookRenameDraft = nil
         } catch {
             let originalContentDigest = Self.noteContentDigest(
                 Data(sourceMarkdown.utf8)
@@ -296,7 +273,7 @@ extension WorkspaceStore {
                 restoredOldPath = true
             }
             if let idx = importedItems.firstIndex(where: {
-                $0.id == oldID || $0.id == replacementItemID
+                $0.id == oldID
             }) {
                 let diskDigest = restoredOldPath
                     ? Self.noteContentDigest(at: oldURL)
@@ -431,7 +408,7 @@ extension WorkspaceStore {
         ""
     }
 
-    static func noteContentDigest(_ data: Data) -> String {
+    nonisolated static func noteContentDigest(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 

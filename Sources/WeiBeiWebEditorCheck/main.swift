@@ -162,9 +162,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         window.weiBeiEditorCheckMode = true;
         window.weiBeiLocalImageScheme = "weibeiimage";
         window.weiBeiMarkdownBaseURL = \(json(URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/WeiBei/Resources/Editor/").absoluteString));
+        document.documentElement.setAttribute('writingsuggestions', 'false');
         """
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        controller.addUserScript(WKUserScript(source: "document.documentElement.setAttribute('writingsuggestions', 'false')", injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         // Focus-dependent source/preview states need a real host, kept hidden.

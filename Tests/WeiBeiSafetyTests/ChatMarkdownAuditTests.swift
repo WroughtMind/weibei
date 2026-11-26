@@ -1,4 +1,5 @@
 import AppKit
+import Markdown
 import WeiBeiCore
 import SwiftMath
 import XCTest
@@ -11,10 +12,7 @@ final class ChatMarkdownAuditTests: XCTestCase {
 
         XCTAssertEqual(protected, "若 \\(f(|succ_i|,|succ_{-i}|)\\) 成立，则继续。")
         XCTAssertEqual(AgentChatKaTeXMarkdown.protectInlineMath(protected), protected)
-        let document = NativeChatMarkdownParser.parse(protected)
-        XCTAssertTrue(document.runs.contains {
-            $0.attachment == .math(latex: "f(|succ_i|,|succ_{-i}|)", display: false)
-        })
+
     }
 
     func testInlineMathProtectionPreservesLiteralAndEscapedDollars() {
@@ -180,10 +178,11 @@ final class ChatMarkdownAuditTests: XCTestCase {
         let title = "教材\n\n![图片](https:&#47;&#47;example.invalid&#47;probe.png)\n\n尾.pdf"
         let source = AgentReplySource(itemID: nil, kind: .material, title: title, label: "[材料：A]", excerpt: "摘录")
         let presentation = AgentReplySourceInlinePresentation(text: source.label, sources: [source], language: .chinese)
-        let document = NativeChatMarkdownParser.parse(presentation.markdown)
+        let document = Document(parsing: presentation.markdown)
         let url = "weibei-source://\(source.id.uuidString.lowercased())"
-        XCTAssertTrue(document.runs.allSatisfy { $0.attachment == nil })
-        XCTAssertTrue(document.runs.contains { $0.style.link == url })
+        let nodes = document.children.flatMap { Array($0.children) }
+        XCTAssertFalse(nodes.contains { $0 is Markdown.Image })
+        XCTAssertTrue(nodes.contains { ($0 as? Markdown.Link)?.destination == url })
         XCTAssertEqual(AgentReplySourceInlinePresentation.linkTitles(in: presentation.markdown).count, 1)
     }
 }

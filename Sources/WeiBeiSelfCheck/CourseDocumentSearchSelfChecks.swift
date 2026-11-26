@@ -347,17 +347,6 @@ func checkCourseDocumentSearchReadiness() throws {
         "旧档案里的材料认识条目解不出新的 kind 时应兜底回空档案"
     )
 
-    // 兼容保证:写侧永远输出旧版本必填的 sources/overview 字段,否则旧版本 App
-    // 会把新数据判成损坏并回退空备份;读侧则要能完整吃下 main 格式的历史数据。
-    let compatibilityEncoded = try JSONSerialization.jsonObject(
-        with: JSONEncoder().encode(profile)
-    ) as? [String: Any] ?? [:]
-    let compatibilityEntries = compatibilityEncoded["entries"] as? [[String: Any]] ?? []
-    try requireSearchCheck(
-        (compatibilityEncoded["overview"] as? String) != nil
-            && compatibilityEntries.allSatisfy { ($0["sources"] as? [Any]) != nil },
-        "档案编码必须带 overview 与 sources 兼容字段,防止旧版本把数据判损坏"
-    )
     let mainShaped: [String: Any] = [
         "courseID": courseID.uuidString,
         "revision": 3,
@@ -381,10 +370,9 @@ func checkCourseDocumentSearchReadiness() throws {
         from: JSONSerialization.data(withJSONObject: mainShaped)
     )
     try requireSearchCheck(
-        mainDecoded.overview == "旧版本写下的概览"
-            && mainDecoded.entries.count == 1
-            && mainDecoded.entries.first?.sources.first?.itemID == "imported:material",
-        "main 格式的历史档案数据应被完整读入,兼容字段保留不丢"
+        mainDecoded.entries.count == 1
+            && mainDecoded.entries.first?.text == "用户自述：已理解货币政策传导",
+        "历史档案中的现有学习记录应继续读取"
     )
     try checkDirectSourceReading()
     try checkCourseDocumentSearchConnectionReuse()

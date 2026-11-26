@@ -227,16 +227,13 @@ public enum StudyPhase: String, Codable, CaseIterable, Hashable, Sendable {
 public struct StudyFlowState: Codable, Hashable, Sendable {
     public var phase: StudyPhase
     public var pinnedByUser: Bool
-    public var suggestedNext: [String]
 
     public init(
         phase: StudyPhase = .orient,
-        pinnedByUser: Bool = false,
-        suggestedNext: [String] = []
+        pinnedByUser: Bool = false
     ) {
         self.phase = phase
         self.pinnedByUser = pinnedByUser
-        self.suggestedNext = suggestedNext
     }
 }
 

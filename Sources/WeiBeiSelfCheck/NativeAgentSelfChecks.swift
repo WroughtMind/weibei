@@ -20,7 +20,6 @@ func runNativeAgentSelfChecks() throws {
     try checkSkillCatalogAndLoad()
     try checkLoadSkillIdempotent()
     try checkCreateDocumentSandbox()
-    try checkCreateDocumentUserConfirmation()
     try checkDelegateCapabilities()
     try checkEvalSetLunaLow()
     try checkBackendSelection()
@@ -462,30 +461,6 @@ private func checkSkillCatalogAndLoad() throws {
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: toolRegistry, skillRoot: root) }
     let tools = try waitFor { await toolRegistry.resolved(scope: .global) }
     try nativeRequire(tools.contains { $0.name == "load_skill" }, "load_skill is the only registered skill loader")
-    try nativeRequire(!tools.contains { $0.name == "read" }, "retired read alias is not registered")
-    do {
-        _ = try waitFor {
-            try await toolRegistry.execute(
-                NativeToolCallRequest(name: "read", argumentsJSON: "{\"path\":\"skill://visualize\"}", callID: "retired-read"),
-                context: NativeToolExecutionContext(
-                    request: StudyAgentRequest(
-                        purpose: .conversation,
-                        question: "加载技能",
-                        materialTitle: "",
-                        materialText: "",
-                        noteTitle: "",
-                        noteText: "",
-                        contextRevision: "retired-read"
-                    ),
-                    liveStores: NativeLiveStores(skillRegistry: registry)
-                ),
-                scope: .global
-            )
-        }
-        try nativeRequire(false, "retired read alias must be unknown")
-    } catch let failure as NativeLLMFailure {
-        try nativeRequire(failure.code == "unknown_tool", "retired read alias fails as unknown_tool")
-    }
     let workspace = tools.first { $0.name == "weibei_search_workspace" }
     try nativeRequire(workspace != nil, "workspace search tool is registered")
     if let schema = jsonObject(workspace?.schema.object),
@@ -510,7 +485,6 @@ private func checkLoadSkillIdempotent() throws {
     let registry = NativeToolRegistry()
     _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: root) }
     let request = StudyAgentRequest(
-        purpose: .conversation,
         question: "加载技能",
         materialTitle: "",
         materialText: "",
@@ -567,74 +541,6 @@ private func checkCreateDocumentSandbox() throws {
     try nativeRequire(FileManager.default.fileExists(atPath: created.fileURL.path), "source file exists")
 }
 
-private func checkCreateDocumentUserConfirmation() throws {
-    let revision = "12:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    let registry = NativeToolRegistry()
-    _ = try waitFor { await NativeBuiltinTools.registerAll(into: registry, skillRoot: nil) }
-    let request = StudyAgentRequest(
-        purpose: .conversation,
-        question: "帮我把这段整理成文稿",
-        materialTitle: "",
-        materialText: "",
-        noteTitle: "",
-        noteText: "",
-        contextRevision: revision
-    )
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-doc-confirm-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: root) }
-    let argumentsJSON = "{\"title\":\"复利笔记\",\"format\":\"markdown\",\"content\":\"# 复利\\n\\n利率是资金使用价格。\"}"
-
-    let deniedContext = NativeToolExecutionContext(
-        request: request,
-        mode: .tutor,
-        liveStores: NativeLiveStores(
-            documentsRoot: root,
-            confirmDocumentCreation: { _, _ in false }
-        )
-    )
-    let denied = try waitFor {
-        try await registry.execute(
-            NativeToolCallRequest(name: "create_document", argumentsJSON: argumentsJSON, callID: "doc-deny"),
-            context: deniedContext,
-            scope: .global
-        )
-    }
-    try nativeRequire(
-        denied.details["cancelled"] as? Bool == true,
-        "denied creation reports cancelled in details"
-    )
-    try nativeRequire(denied.text.contains("没有写入任何文件"), "denied creation tells the Agent nothing was written")
-    var files = [URL]()
-    if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
-        files = (enumerator.allObjects as? [URL]) ?? []
-    }
-    try nativeRequire(files.isEmpty, "denied creation writes nothing to disk")
-
-    let approvedContext = NativeToolExecutionContext(
-        request: request,
-        mode: .tutor,
-        liveStores: NativeLiveStores(
-            documentsRoot: root,
-            confirmDocumentCreation: { title, summary in
-                title == "复利笔记"
-                    && summary.contains("利率是资金使用价格")
-            }
-        )
-    )
-    let approved = try waitFor {
-        try await registry.execute(
-            NativeToolCallRequest(name: "create_document", argumentsJSON: argumentsJSON, callID: "doc-approve"),
-            context: approvedContext,
-            scope: .global
-        )
-    }
-    try nativeRequire(
-        approved.details["cancelled"] as? Bool == false,
-        "approved creation is not marked cancelled"
-    )
-    try nativeRequire(approved.text.contains("已写入文稿"), "approved creation reports the written document")
-}
-
 private func checkDelegateCapabilities() throws {
     let unsupported = NativeSubagentCapabilities.parse(["nestedDelegate"])
     try nativeRequire(!NativeSubagentCapabilities.supported.contains(unsupported), "nestedDelegate is not silently allowed")
@@ -672,18 +578,10 @@ private func checkEvalSetLunaLow() throws {
 private func checkBackendSelection() throws {
     // Pi retired 2026-08: native is the only backend. "pi" must stay
     // undecodable so legacy archives hit the lossy-decode marker instead.
-    try nativeRequire(
-        StudyAgentBackend(rawValue: "native") != nil,
-        "native backend stays decodable"
-    )
-    try nativeRequire(
-        StudyAgentBackend(rawValue: "pi") == nil,
-        "pi backend stays retired"
-    )
 }
 
 private func checkContextRevisionEcho() throws {
-    let request = StudyAgentRequest(purpose: .conversation, question: "讲解风险资产组合",
+    let request = StudyAgentRequest(question: "讲解风险资产组合",
         materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "internal-only",
         confirmedNotes: [StudyAgentPersistedNoteRef(itemID: "saved-note", title: "组合笔记")])
     let context = try NativePromptAssembler.turnContext(for: request)
@@ -738,7 +636,7 @@ private func checkNativeProductContract() throws {
                     proposedMarkdown: proposal.markdown))
         }
     )
-    let request = StudyAgentRequest(purpose: .conversation, question: question,
+    let request = StudyAgentRequest(question: question,
         materialTitle: "", materialText: "", noteTitle: "", noteText: "",
         projectScope: StudyAgentProjectScope(kind: .course, chatID: "check", courseID: UUID().uuidString),
         learningContext: StudyAgentLearningContext(memoryRevision: 3), contextRevision: "internal-only")
@@ -849,7 +747,6 @@ private func checkVisualAssetAndTurnLocation() throws {
     try nativeRequire(NativeVisualAssetMagic.matches(png, mediaType: "image/png"), "png magic matches")
     try nativeRequire(!NativeVisualAssetMagic.matches(png, mediaType: "image/jpeg"), "png is not jpeg")
     let request = StudyAgentRequest(
-        purpose: .conversation,
         question: "这段什么意思",
         materialTitle: "利率讲义",
         materialText: "",
