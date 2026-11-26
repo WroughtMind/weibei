@@ -34,12 +34,6 @@ struct NotebookCreationDraft: Identifiable, Equatable {
     var title: String
 }
 
-struct NotebookRenameDraft: Identifiable, Equatable {
-    let id = UUID()
-    var itemID: String
-    var title: String
-}
-
 struct ThreePaneReorderDrag: Equatable {
     var role: WorkspacePaneRole
     var translation: CGFloat
@@ -67,41 +61,6 @@ struct CourseHomeSearchResult: Identifiable, Sendable {
     let title: String
     let detail: String
     let matchedText: String?
-}
-
-struct CourseHomeSearchOutcome: Sendable {
-    let results: [CourseHomeSearchResult]
-    let availability: CourseDocumentIndexAvailability
-}
-
-struct CourseProjectRebindProposal {
-    let courseID: UUID
-    let courseTitle: String
-    let candidateRoot: URL
-    let candidateRootIdentity: ImportedFileIdentity
-    let expectedCourse: Course
-    /// 只阻止确认期间的本机修改，不参与课程状态选边。
-    let expectedLocalPayloadDigest: String
-    let snapshot: CoursePortableAdoptionSnapshot
-}
-
-enum CourseFolderAdoptionOutcome {
-    case opened(UUID)
-    case requiresRebind(CourseProjectRebindProposal)
-}
-
-enum CourseProjectRebindError: LocalizedError {
-    case originalRootStillAvailable
-    case proposalChanged
-
-    var errorDescription: String? {
-        switch self {
-        case .originalRootStillAvailable:
-            return "原课程文件夹仍然可以安全访问；魏碑不会把同一门课程静默改绑到另一处。"
-        case .proposalChanged:
-            return "课程或所选文件夹在确认前发生了变化，请重新选择后再试。"
-        }
-    }
 }
 
 enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
@@ -290,6 +249,8 @@ final class AgentSessionDrafts {
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
+    /// Open for this workspace session, in the order the materials were opened.
+    @Published private var readerTabIDs: [String] = []
     @Published var selectedItemID: String? {
         willSet {
             if selectedItemID != newValue { commitCurrentReaderLocation() }
@@ -297,6 +258,10 @@ final class WorkspaceStore: ObservableObject {
         didSet {
             if materialPickerPresented { materialPickerPresented = false }
             if oldValue != selectedItemID { clearAutomaticSelectionAttachment() }
+            // A file move may update the selected ID before replacing its registration.
+            if let id = selectedItemID, !readerTabIDs.contains(id), selectedItem?.isCourseMaterial != false {
+                readerTabIDs.append(id)
+            }
         }
     }
     @Published var activeNotebookItemID: String? {
@@ -375,14 +340,12 @@ final class WorkspaceStore: ObservableObject {
     var agentRuns: [UUID: AgentConversationRun] = [:]
     let idleAgentRun = AgentConversationRun(chatID: nil)
     var agentStreamingUsesReducedMotion = false
-    @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
     var nativeVisualizationWaiters: [UUID: (token: UUID, requestID: UUID, replyMessageID: UUID, visualization: AgentVisualization,
         continuation: CheckedContinuation<NativeToolExecutionResult, Never>)] = [:]
     @Published private(set) var lastAgentFailureKind: AgentFailureKind?
     @Published private(set) var agentAuthenticationStatus = AgentAuthenticationStatus()
-    @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
     @Published var noteSourceLinks: [NoteSourceLink] = [] {
         didSet {
             noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)
@@ -391,7 +354,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var materialNotePairings: [String: String] = [:]
     @Published var noteMaterialPairings: [String: String] = [:]
     @Published private(set) var blankNoteDraftMaterialID: String?
-    @Published var linkedSourcesPresented = false
     @Published var notePickerPresented = false
     @Published var materialPickerPresented = false
     var studyLocationsByItemID: [String: StudyLocation] = [:]
@@ -509,8 +471,8 @@ final class WorkspaceStore: ObservableObject {
     var searchesNotes: Bool { focusedPane == .notes }
     var canSearchCurrentDocument: Bool {
         searchesNotes
-            ? isPaneToggleActive(.notes) && !activeNoteEditorDocumentID.isEmpty && !notePickerPresented
-            : hasSelectedMaterial && isPaneToggleActive(.reader) && !materialPickerPresented
+            ? isPaneVisible(.notes) && !activeNoteEditorDocumentID.isEmpty && !notePickerPresented
+            : hasSelectedMaterial && isPaneVisible(.reader) && !materialPickerPresented
     }
     /// Reader viewport (HTML section / PDF page). Scroll commits must not auto-publish:
     /// every EnvironmentObject consumer would remasure and freeze main (sample 2026-08-01).
@@ -557,9 +519,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
     @Published private(set) var readerTargetLocationRequestID = UUID()
-    @Published var layout: WorkspaceLayout = .documentAgentNotes {
-        didSet { landAgentStreamingDisplayIfHidden() }
-    }
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     /// Live drag chrome only — not `@Published` on the main store (avoids full-tree thrash).
     let threePaneReorder = ThreePaneReorderState()
@@ -626,6 +585,7 @@ final class WorkspaceStore: ObservableObject {
     var automaticSelection: SelectionContext?
     /// 选区"记"留痕(原文标记渲染与回访;管理逻辑在 WorkspaceStore+SelectionRemark)。
     @Published var excerptBookPresented = false
+    @Published var notePDFExportRequest: NotePDFExportRequest?
     @Published var excerptBookCourseID: UUID?
     @Published var excerptBookTargetRecordID: UUID?
     @Published var excerptRevealRequest: ExcerptRevealRequest?
@@ -718,7 +678,6 @@ final class WorkspaceStore: ObservableObject {
     var pendingConfirmedFileImports: [PendingConfirmedFileImport] = []
     var recentlyImportedClearTask: Task<Void, Never>?
     @Published var notebookCreationDraft: NotebookCreationDraft?
-    @Published var notebookRenameDraft: NotebookRenameDraft?
     var notebookRenameInFlight = false
     @Published var modelName: String = ""
     @Published var agentProviderID: AgentProviderID = .openai
@@ -766,7 +725,6 @@ final class WorkspaceStore: ObservableObject {
     var lastCourseNoteWriteRanOnMainThread: Bool?
     var lastCourseHomeSearchRanOnMainThread: Bool?
     var lastPortableAdoptionReadRanOnMainThread: Bool?
-    var lastCourseRebindRootSearchRanOnMainThread: Bool?
     let workspaceDirectory: URL
     let storageURL: URL
     let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
@@ -814,7 +772,6 @@ final class WorkspaceStore: ObservableObject {
     var persistedWorkspaceCourseIDs = Set<UUID>()
     var needsPortableCourseStateBootstrap = false
     private var lastAgentReplyContextRevision: UInt64?
-    private var latestAgentLearningUpdateQuestion: String?
     private var isRestoringNavigation = false
     private var lastSelectionAttachmentDate: Date?
     private var lastSelectionUpdateDate: Date?
@@ -839,7 +796,6 @@ final class WorkspaceStore: ObservableObject {
     private var lastWorkspacePersistenceRanOnMainThread: Bool?
     private var courseHomePerformanceNavigationSpan: WeiBeiPerf.Span?
     private let workspaceSaveDebounceNanoseconds: UInt64 = 280_000_000
-    var noteSourceLinksMigrationVersion = 0
     private var studySessionScopeMigrationVersion = 0
     private var learningMemoryScopeMigrationVersion = 0
     private var isRestoringCourseResumePoint = true
@@ -849,8 +805,6 @@ final class WorkspaceStore: ObservableObject {
     var courseMembershipIndex = CourseItemMemberships()
     private var courseWorkspaceReturnFocus: PaneFocus?
     var activeCourseSecurityScopes: [String: URL] = [:]
-    var activeCourseSecurityScopeOwnerTokens: [String: UUID] = [:]
-    var activeCourseRebindTokens: [UUID: UUID] = [:]
     var activeCourseRemovalTokens: [UUID: UUID] = [:]
     var activeCourseRemovalTransactionID: UUID?
     var pendingCourseTrashReceiptCleanups:
@@ -869,23 +823,13 @@ final class WorkspaceStore: ObservableObject {
     var courseReconciliationInFlight = false
     var lastCourseReconciliationLookupCount = 0
 
-    var showRightPane: Bool {
-        get { showNotes || showAgent }
-        set {
-            // Single paneState publish (notes+agent together).
-            paneState.setRightPaneVisible(newValue)
-        }
-    }
-
     struct NavigationSnapshot: Equatable {
         var selectedItemID: String?
         var activeNotebookItemID: String?
-        var layout: WorkspaceLayout
         var showLibrary: Bool
         var showReader: Bool
         var showAgent: Bool
         var showNotes: Bool
-        var agentSurface: AgentSurface
         var showDocumentSearch: Bool
         var readerSearch: String
         var readerLocationID: String?
@@ -1097,7 +1041,6 @@ final class WorkspaceStore: ObservableObject {
             motionPreference = persistedMotionPreference
         }
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
-        Self.removeLegacyCourseIndex(in: courseIndexDirectory)
         courseDocumentSearchIndex = CourseDocumentSearchIndex(
             databaseURL: courseIndexDirectory.appendingPathComponent("course-search-v3.sqlite3")
         )
@@ -1401,6 +1344,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func removeItemRegistration(_ itemID: String) {
+        if let tabIndex = readerTabIDs.firstIndex(of: itemID) {
+            readerTabIDs.remove(at: tabIndex)
+        }
         fileMissingSinceByItemID.removeValue(forKey: itemID)
         pendingNotePersistenceTasks.removeValue(forKey: itemID)?.cancel()
         courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
@@ -1474,30 +1420,12 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func assignItemIDs(_ itemIDs: Set<String>, to courseID: UUID) {
-        guard courses.contains(where: { $0.id == courseID }),
-              itemIDs.isDisjoint(with: activeItemFileMutationIDs) else {
-            return
-        }
-        let validItemIDs = Set(importedItems.map(\.id))
-        var memberships = courseMembershipIndex
-        memberships.assign(itemIDs: itemIDs.intersection(validItemIDs), to: courseID)
-        guard memberships.values != courseItemMemberships else { return }
-        courseItemMemberships = memberships.values
-        activeCourseID = courseID
-        save()
-    }
-
     func relationCount(in courseID: UUID) -> Int {
         let materialIDs = Set(courseMaterials(in: courseID).map(\.id))
         let noteIDs = Set(courseNotes(in: courseID).map(\.id))
         return noteSourceLinks.lazy.filter {
             materialIDs.contains($0.sourceItemID) && noteIDs.contains($0.noteItemID)
         }.count
-    }
-
-    var recentCourseSessions: [StudySession] {
-        orderedStudySessions.filter(\.hasChatHistory)
     }
 
     /// Non-empty Chats that have actually used this course.
@@ -1522,51 +1450,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Compatibility for older call sites that need one preferred related course.
-    func primaryCourseID(for session: StudySession) -> UUID? {
-        session.relatedCourseIDs.first {
-            courseID in courses.contains { $0.id == courseID }
-        }
-    }
-
-    var activeCourseMemories: [LearningMemoryEntry] {
-        guard let activeCourseID else { return [] }
-        return orderedLearningMemoryEntries(in: .course(activeCourseID))
-            .filter { $0.status == .active }
-    }
-
-    var recentCourseMessages: [AgentMessage] {
-        studySessions
-            .flatMap(\.messages)
-            .sorted { $0.createdAt > $1.createdAt }
-    }
-
-    var courseWorkspaceSummary: CourseWorkspaceSummary {
-        CourseWorkspaceSummary(
-            importedItems: importedItems,
-            noteSourceLinks: noteSourceLinks,
-            studyLocationsByItemID: studyLocationsByItemID,
-            studySessions: studySessions,
-            learningMemoryEntries: activeCourseMemories
-        )
-    }
-
-    var courseMaterialsWithoutReadingPosition: [StudyItem] {
-        courseMaterials.filter { studyLocationsByItemID[$0.id] == nil }
-    }
-
-    var courseMaterialsWithoutNoteLinks: [StudyItem] {
-        let validNoteIDs = Set(courseNotebookItems.map(\.id))
-        let linkedIDs = Set(noteSourceLinks.lazy.filter { validNoteIDs.contains($0.noteItemID) }.map(\.sourceItemID))
-        return courseMaterials.filter { !linkedIDs.contains($0.id) }
-    }
-
-    var courseNotesWithoutSourceLinks: [StudyItem] {
-        let validSourceIDs = Set(courseMaterials.map(\.id))
-        let linkedIDs = Set(noteSourceLinks.lazy.filter { validSourceIDs.contains($0.sourceItemID) }.map(\.noteItemID))
-        return courseNotebookItems.filter { !linkedIDs.contains($0.id) }
-    }
-
     func studyLocation(for itemID: String) -> StudyLocation? {
         studyLocation(for: itemID, in: activeCourseID)
     }
@@ -1580,148 +1463,17 @@ final class WorkspaceStore: ObservableObject {
         noteSourceRelationIndex.noteIDs(for: sourceItemID)
     }
 
-    func linkedNoteCount(for sourceItemID: String) -> Int {
-        noteSourceRelationIndex.noteCount(for: sourceItemID)
-    }
-
     func item(withID itemID: String) -> StudyItem? {
         allItems.first { $0.id == itemID }
-    }
-
-    var linkedSourceIDsForActiveNote: [String] {
-        guard let noteItemID = activeNotebookItemID else { return [] }
-        return linkedSourceIDs(for: noteItemID)
     }
 
     func linkedSourceIDs(for noteItemID: String) -> [String] {
         noteSourceRelationIndex.sourceIDs(for: noteItemID)
     }
 
-    func linkedSourceCount(for noteItemID: String) -> Int {
-        noteSourceRelationIndex.sourceCount(for: noteItemID)
-    }
-
     func linkedCourseSourceIDs(for noteItemID: String) -> [String] {
         let validCourseIDs = Set(courseMaterials.map(\.id))
         return noteSourceRelationIndex.sourceIDs(for: noteItemID).filter(validCourseIDs.contains)
-    }
-
-    var linkedSourcesForActiveNote: [StudyItem] {
-        let linkedIDs = Set(linkedSourceIDsForActiveNote)
-        return allItems.filter { linkedIDs.contains($0.id) && $0.isCourseMaterial }
-    }
-
-    var linkedSourceCount: Int {
-        linkedSourcesForActiveNote.count
-    }
-
-    func contextualBrowserItems(
-        _ kind: ContextualContentKind,
-        courseID: UUID?
-    ) -> [StudyItem] {
-        allItems.filter { item in
-            guard courseContextItemMatches(item, kind: kind) else {
-                return false
-            }
-            if let courseID {
-                return courseMembershipIndex.courseIDs(for: item.id)
-                    .contains(courseID)
-            }
-            switch item.storage {
-            case .common:
-                return true
-            case .courseOwned, .bundledSample:
-                return false
-            }
-        }.sorted {
-            displayTitle(for: $0).localizedStandardCompare(
-                displayTitle(for: $1)
-            ) == .orderedAscending
-        }
-    }
-
-    /// One-pass course → visible-item counts for the contextual browser; replaces
-    /// per-course full-library rescans that made opening stutter on large libraries.
-    func contextualBrowserItemCounts(
-        _ kind: ContextualContentKind
-    ) -> [UUID: Int] {
-        var counts: [UUID: Int] = [:]
-        for item in allItems where courseContextItemMatches(item, kind: kind) {
-            for courseID in courseMembershipIndex.courseIDs(for: item.id) {
-                counts[courseID, default: 0] += 1
-            }
-        }
-        return counts
-    }
-
-    /// Count of the browser's common (non-course) section without the display
-    /// sort — root rows only need the number, not the sorted list.
-    func contextualBrowserCommonCount(_ kind: ContextualContentKind) -> Int {
-        allItems.reduce(into: 0) { count, item in
-            guard courseContextItemMatches(item, kind: kind) else { return }
-            switch item.storage {
-            case .common:
-                count += 1
-            case .courseOwned, .bundledSample:
-                break
-            }
-        }
-    }
-
-    func contextualBrowserCourseSummaries(
-        _ kind: ContextualContentKind
-    ) -> [(course: Course, itemCount: Int)] {
-        let counts = contextualBrowserItemCounts(kind)
-        return courses.compactMap { course in
-            let count = counts[course.id] ?? 0
-            guard count > 0 else { return nil }
-            return (course, count)
-        }.sorted {
-            $0.course.title.localizedStandardCompare($1.course.title) == .orderedAscending
-        }
-    }
-
-    func contextualBrowserCourses(
-        _ kind: ContextualContentKind
-    ) -> [Course] {
-        contextualBrowserCourseSummaries(kind).map(\.course)
-    }
-
-    func contextualPreferredItems(
-        _ kind: ContextualContentKind
-    ) -> [StudyItem] {
-        switch kind {
-        case .note:
-            guard let materialID = selectedMaterialItem?.id else { return [] }
-            let ids = linkedNoteIDs(for: materialID)
-            return ids.compactMap { item(withID: $0) }
-        case .material:
-            guard let noteID = activeNoteItem?.id else { return [] }
-            let ids = linkedSourceIDs(for: noteID)
-            if !ids.isEmpty {
-                return ids.compactMap { item(withID: $0) }
-            }
-            let courseIDs = courseMembershipIndex.courseIDs(for: noteID)
-            guard courseIDs.count == 1, let courseID = courseIDs.first else {
-                return []
-            }
-            return contextualBrowserItems(.material, courseID: courseID)
-        }
-    }
-
-    func contextualPreferredCourses(
-        _ kind: ContextualContentKind
-    ) -> [Course] {
-        guard kind == .material,
-              let noteID = activeNoteItem?.id,
-              linkedSourceIDs(for: noteID).isEmpty else {
-            return []
-        }
-        let courseIDs = Set(courseMembershipIndex.courseIDs(for: noteID))
-        guard courseIDs.count > 1 else { return [] }
-        return contextualBrowserCourseSummaries(kind).compactMap { summary in
-            courseIDs.contains(summary.course.id) ? summary.course : nil
-        }
     }
 
     func openContextualItem(
@@ -1797,18 +1549,10 @@ final class WorkspaceStore: ObservableObject {
         orderedStudySessions.filter(\.hasChatHistory)
     }
 
-    var globalStudySessions: [StudySession] {
-        historicalStudySessions
-    }
-
     func studySessions(in courseID: UUID) -> [StudySession] {
         historicalStudySessions.filter {
             $0.relatedCourseIDs.contains(courseID)
         }
-    }
-
-    var unclassifiedStudySessions: [StudySession] {
-        []
     }
 
     func learningMemoryKindLabel(_ kind: LearningMemoryKind) -> String {
@@ -1825,10 +1569,6 @@ final class WorkspaceStore: ObservableObject {
 
     var activeStudySessionTitle: String {
         activeStudySession?.title ?? ui("新对话", "New chat")
-    }
-
-    var activeStudySessionScopeTitle: String {
-        activeStudySession?.title ?? ui("新对话", "New Chat")
     }
 
     @discardableResult
@@ -1918,21 +1658,6 @@ final class WorkspaceStore: ObservableObject {
         return true
     }
 
-    @discardableResult
-    func classifyStudySession(_ id: UUID, as courseID: UUID?) -> Bool {
-        guard let index = studySessions.firstIndex(where: { $0.id == id }) else {
-            return false
-        }
-        if let courseID,
-           courses.contains(where: { $0.id == courseID }),
-           !studySessions[index].relatedCourseIDs.contains(courseID) {
-            studySessions[index].relatedCourseIDs.append(courseID)
-            studySessions[index].relatedCourseIDs.sort { $0.uuidString < $1.uuidString }
-        }
-        save()
-        return true
-    }
-
     func associateStudySession(_ id: UUID, with courseIDs: some Sequence<UUID>) {
         guard let index = studySessions.firstIndex(where: { $0.id == id }) else { return }
         let validCourseIDs = Set(courses.map(\.id))
@@ -2010,9 +1735,6 @@ final class WorkspaceStore: ObservableObject {
     func resumePreviousStudy() {
         guard let location = lastStudyLocation,
               let item = allItems.first(where: { $0.id == location.itemID }) else { return }
-        if layout == .immersiveConversation || layout == .immersiveWriting {
-            setLayout(item.isNotebookNote ? .immersiveWriting : .immersiveReading)
-        }
         select(itemID: location.itemID)
         if item.isNotebookNote {
             showNotes = true
@@ -2049,6 +1771,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func resetPrimaryEntriesForLaunch() {
         selectedItemID = nil
+        readerTabIDs.removeAll()
         activeNotebookItemID = nil
         activeStudySessionID = nil
         activeCourseID = nil
@@ -2063,7 +1786,6 @@ final class WorkspaceStore: ObservableObject {
         showNotes = false
         showDocumentSearch = false
         readerSearch = ""
-        layout = .documentAgentNotes
         threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
         agentSurface = .hidden
         selectionContext = nil
@@ -2134,12 +1856,10 @@ final class WorkspaceStore: ObservableObject {
 
     func restoreAgentReplyState(from session: StudySession) {
         guard let reply = session.messages.last(where: { $0.role == .assistant }) else {
-            latestAgentLearningUpdate = nil
             lastFailedAgentQuestion = nil
             lastAgentFailureKind = nil
             return
         }
-        latestAgentLearningUpdate = nil
         lastFailedAgentQuestion = reply.retryQuestion
         lastAgentFailureKind = reply.failureKind
     }
@@ -2948,36 +2668,78 @@ final class WorkspaceStore: ObservableObject {
 
     private func agentActionNoteMarkdown(_ item: StudyItem) async throws -> String {
         if !item.editsBackingMarkdownFile, let pending = notesByItemID[item.id] {
-            return cleanLegacyPlaceholder(pending)
+            return pending
         }
         if activeNoteItemID == item.id {
             return noteText
         }
         if let pending = notesByItemID[item.id] {
-            return cleanLegacyPlaceholder(pending)
+            return pending
         }
         if let loaded = loadedCourseNoteTextByItemID[item.id] {
             return loaded
         }
         guard item.editsBackingMarkdownFile else {
-            return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+            return notesByItemID[item.id] ?? defaultNote(for: item)
         }
+        return try await readNoteBackingMarkdown(item)
+    }
+
+    func notePDFSource(itemID: String) async throws -> NotePDFSource {
+        guard let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let markdown: String
+        if activeNoteItemID == itemID, noteEditingSession.documentID == itemID, noteEditingSession.dirty {
+            let snapshot = try await noteEditingSession.snapshot(persists: false)
+            guard snapshot.documentID == itemID else { throw CocoaError(.fileReadNoSuchFile) }
+            markdown = snapshot.markdown
+        } else if let draft = notesByItemID[itemID] {
+            markdown = draft
+        } else if item.editsBackingMarkdownFile {
+            markdown = try await readNoteBackingMarkdown(item, refreshTracking: false)
+        } else {
+            markdown = activeNoteItemID == itemID ? noteText : defaultNote(for: item)
+        }
+        let compactTypography = activeNoteItemID == itemID
+            ? await noteEditingSession.compactTypographyForExport(documentID: itemID)
+            : nil
+        guard let current = allItems.first(where: { $0.id == itemID }) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        let title = NoteTabDisplayTitle.resolve(
+            customTitle: current.customDisplayTitle, noteTitle: current.title, body: markdown
+        )
+        let directory = (resolvedLibraryURL(for: current) ?? current.url)?.deletingLastPathComponent()
+        let appFiles = workspaceDirectory.appendingPathComponent("Files", isDirectory: true)
+        return NotePDFSource(
+            title: title.isEmpty ? current.title : title, markdown: markdown,
+            baseURL: directory ?? appFiles,
+            attachments: directory?.appendingPathComponent(".weibei-assets", isDirectory: true)
+                ?? appFiles.appendingPathComponent("Attachments", isDirectory: true),
+            compactTypography: compactTypography
+        )
+    }
+
+    private func readNoteBackingMarkdown(_ item: StudyItem, refreshTracking: Bool = true) async throws -> String {
         let url: URL
         let identity: ImportedFileIdentity
         let courseAccess: VerifiedCourseOwnedNoteAccess?
         if case .courseOwned = item.storage {
-            guard let access = verifiedCourseOwnedNoteAccess(item) else {
+            guard let access = verifiedCourseOwnedNoteAccess(item, refreshTracking: refreshTracking) else {
                 throw CourseOwnedFileError.verificationFailed
             }
             url = access.url
             identity = access.fileIdentity
             courseAccess = access
         } else {
-            guard let itemURL = item.url,
-                  let itemIdentity = item.importedFileIdentity else {
-                return cleanLegacyPlaceholder(
-                    notesByItemID[item.id] ?? defaultNote(for: item)
-                )
+            let registeredURL = refreshTracking ? item.url : resolvedLibraryURL(for: item) ?? item.url
+            let registeredIdentity = refreshTracking
+                ? item.importedFileIdentity
+                : registeredURL.flatMap(importedFileIdentityResolver)
+            guard let itemURL = registeredURL, let itemIdentity = registeredIdentity else {
+                if refreshTracking { return notesByItemID[item.id] ?? defaultNote(for: item) }
+                throw CocoaError(.fileReadNoSuchFile)
             }
             url = itemURL
             identity = itemIdentity
@@ -2992,12 +2754,12 @@ final class WorkspaceStore: ObservableObject {
                 $0.id == item.id
             }),
             let currentAccess =
-                verifiedCourseOwnedNoteAccess(currentItem),
+                verifiedCourseOwnedNoteAccess(currentItem, refreshTracking: refreshTracking),
             currentAccess.matches(courseAccess) else {
                 throw CourseOwnedFileError.verificationFailed
             }
         }
-        return cleanLegacyPlaceholder(result.markdown)
+        return result.markdown
     }
 
     private func appendingAgentNoteProposal(
@@ -3104,6 +2866,60 @@ final class WorkspaceStore: ObservableObject {
         return item
     }
 
+    var readerTabMaterials: [StudyItem] {
+        let validCourseID = activeCourseID
+        return readerTabIDs.compactMap { id in
+            guard let item = importedItems.first(where: { $0.id == id && $0.isCourseMaterial }) else {
+                return nil
+            }
+            if let validCourseID {
+                let itemCourseIDs = courseIDs(for: item.id)
+                guard itemCourseIDs.isEmpty || itemCourseIDs.contains(validCourseID) else {
+                    return nil
+                }
+            }
+            return item
+        }
+    }
+
+    func readerTabProgressSummary(for item: StudyItem) -> String? {
+        let location = studyLocation(for: item.id)
+        if item.kind == .pdf {
+            return location?.pageIndex.map { ui("第 \($0 + 1) 页", "Page \($0 + 1)") }
+        }
+        guard let raw = location?.locationTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        let cleaned = Self.userFacingReferenceTitle(raw)
+        guard !cleaned.isEmpty, cleaned != displayTitle(for: item) else { return nil }
+        return cleaned
+    }
+
+    func selectReaderTab(_ itemID: String?) {
+        if let itemID {
+            guard readerTabMaterials.contains(where: { $0.id == itemID }) else { return }
+        }
+        if selectedItemID != itemID {
+            selectMeasured(itemID: itemID, opensNotebook: false)
+        }
+        if materialPickerPresented { materialPickerPresented = false }
+        focus(.reader)
+    }
+
+    func closeReaderTab(_ itemID: String) {
+        let tabs = readerTabMaterials
+        guard let index = tabs.firstIndex(where: { $0.id == itemID }) else { return }
+        readerTabIDs.removeAll { $0 == itemID }
+        guard selectedItemID == itemID else {
+            save()
+            return
+        }
+
+        let nextID = tabs.dropFirst(index + 1).first?.id ?? tabs.prefix(index).last?.id
+        selectReaderTab(nextID)
+    }
+
     var activeNoteItem: StudyItem? {
         // 笔记窗格只跟随笔记主键;选中条目本身是笔记(在文稿区打开)时不再牵引
         // 笔记窗格——文稿区/笔记区各管各的(2026-08-26 定案解耦)。
@@ -3142,19 +2958,6 @@ final class WorkspaceStore: ObservableObject {
             return showAgent
         case .notes:
             return showNotes
-        }
-    }
-
-    func isPaneToggleActive(_ role: WorkspacePaneRole) -> Bool {
-        switch layout {
-        case .immersiveReading:
-            return role == .reader
-        case .immersiveConversation:
-            return role == .agent
-        case .immersiveWriting:
-            return role == .notes
-        case .documentAgentNotes, .documentNotesAgent:
-            return isPaneVisible(role)
         }
     }
 
@@ -3354,7 +3157,6 @@ final class WorkspaceStore: ObservableObject {
                   message.text != run.latestAgentStreamingText else { continue }
             _ = updateAgentMessage(messageID, in: chatID) {
                 $0.text = run.latestAgentStreamingText
-                $0.backend = .native
             }
         }
     }
@@ -3384,10 +3186,6 @@ final class WorkspaceStore: ObservableObject {
         // Neutral, ChatGPT-like. Never steer toward a surface — the agent
         // already knows what is open; the placeholder should not lecture.
         ui("问点什么…", "Ask anything")
-    }
-
-    var selectionPromptScope: String {
-        selectionContext?.source == .note ? ui("当前笔记", "the current note") : agentPromptScope
     }
 
     var canApplyAgentAnswer: Bool {
@@ -3478,7 +3276,7 @@ final class WorkspaceStore: ObservableObject {
                   importedFileIdentityResolver(url)?.matchesAcrossVolumeDrift(identity) == true else {
                 return nil
             }
-            return cleanLegacyPlaceholder(result.markdown)
+            return result.markdown
         }
         return try? await agentActionNoteMarkdown(item)
     }
@@ -3970,7 +3768,6 @@ final class WorkspaceStore: ObservableObject {
         invalidateAgentContext()
         persistCurrentNote()
         notebookCreationDraft = nil
-        notebookRenameDraft = nil
         if let itemID {
             alignActiveCourse(with: itemID)
         }
@@ -3982,7 +3779,6 @@ final class WorkspaceStore: ObservableObject {
             blankNoteDraftMaterialID = nil
             activeNotebookItemID = item.id
             noteText = noteText(for: item)
-            latestAgentLearningUpdate = nil
             refreshActiveNoteFromBackingFile()
             if !isRestoringCourseResumePoint {
                 syncActiveStudySession()
@@ -4034,7 +3830,6 @@ final class WorkspaceStore: ObservableObject {
         }
         clearReaderSearchIfNeeded()
         noteText = noteText(for: activeNoteItem)
-        latestAgentLearningUpdate = nil
         if !isRestoringCourseResumePoint {
             syncActiveStudySession()
         }
@@ -4047,11 +3842,6 @@ final class WorkspaceStore: ObservableObject {
         guard !containingCourseIDs.isEmpty else { return }
         if let activeCourseID, containingCourseIDs.contains(activeCourseID) { return }
         activeCourseID = containingCourseIDs.first
-    }
-
-    func setLinkedSourceIDsForActiveNote(_ sourceItemIDs: Set<String>) {
-        guard let noteItemID = activeNotebookItemID else { return }
-        setLinkedSourceIDs(sourceItemIDs, for: noteItemID)
     }
 
     func setLinkedSourceIDs(_ sourceItemIDs: Set<String>, for noteItemID: String) {
@@ -4324,12 +4114,8 @@ final class WorkspaceStore: ObservableObject {
         dismissCourseWorkspace(restoringFocus: false)
         if !keepLibraryOpen { showLibrary = false }
         selectMeasured(itemID: itemID, opensNotebook: false)
-        if layout == .immersiveWriting || layout == .immersiveConversation {
-            setLayout(.immersiveReading)
-        } else {
-            showReader = true
-            focus(.reader)
-        }
+        showReader = true
+        focus(.reader)
         if let activeCourseID,
            let location = studyLocation(for: itemID, in: activeCourseID) {
             _ = captureCourseResumePoint(
@@ -4414,44 +4200,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Route one course-home question into the existing Chat/Agent pipeline.
-    /// The home keeps its own draft until this method has validated the course root.
-    @discardableResult
-    func submitCourseHomeQuestion(
-        _ rawQuestion: String,
-        in courseID: UUID
-    ) -> UUID? {
-        let question = rawQuestion.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        guard !question.isEmpty,
-              !isStoppingAgent,
-              !isAgentRunningInActiveChat,
-              agentRequestTask == nil || isAskingAgent,
-              course(withID: courseID) != nil else {
-            return nil
-        }
-
-        guard let session = activeStudySession
-                ?? createStudySession(courseID: nil) else {
-            return nil
-        }
-
-        freshlyCreatedEmptyStudySessionID = nil
-        activeCourseID = courseID
-        agentDraft = question; pendingComposerDraft = question
-        sessionDrafts.textBySession[session.id] = question
-        openConversationInWorkspace(courseID: courseID)
-        submitAgentDraft(targetCourseID: courseID)
-        return session.id
-    }
-
     private func openConversationInWorkspace(courseID: UUID?) {
         if let courseID {
             activeCourseID = courseID
         }
         setDocumentPaneSet([.reader, .agent, .notes])
-        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
         focus(.agent)
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
@@ -4522,7 +4275,6 @@ final class WorkspaceStore: ObservableObject {
         if restoredMaterial { panes.insert(.reader) }
         if restoredNote { panes.insert(.notes) }
         setDocumentPaneSet(panes)
-        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
         focus(.reader)
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
@@ -4728,15 +4480,6 @@ final class WorkspaceStore: ObservableObject {
         return try result!.get()
     }
 
-    func createNotebookNoteFromCurrentMaterial() {
-        guard let selectedMaterialItem else {
-            createBlankNotebookNote()
-            return
-        }
-        // 同一资料允许重复新建多篇笔记，noteSourceLink 保留关联。
-        createNotebookNote(seed: .currentMaterial(selectedMaterialItem))
-    }
-
     func promptCreateBlankNotebookNote() {
         createBlankNotebookNote()
     }
@@ -4758,7 +4501,6 @@ final class WorkspaceStore: ObservableObject {
             promptCreateBlankNotebookNote()
             return
         }
-        notebookRenameDraft = nil
         notebookCreationDraft = NotebookCreationDraft(
             kind: .currentMaterial,
             sourceItemID: selectedMaterialItem.id,
@@ -4804,18 +4546,9 @@ final class WorkspaceStore: ObservableObject {
             revealDocumentPane(.notes)
             return
         }
-        if pane == .agent {
-            if layout == .immersiveReading || layout == .immersiveWriting {
-                // Primary chat is immersive conversation, not a deleted overlay surface.
-                layout = .immersiveConversation
-                showAgent = true
-                if agentSurface != .selectionFloat {
-                    agentSurface = .hidden
-                }
-            } else if !showAgent {
-                revealDocumentPane(.agent)
-                return
-            }
+        if pane == .agent, !showAgent {
+            revealDocumentPane(.agent)
+            return
         }
         collapseSelectionFloatIntoConversationIfVisible()
         focusedPane = pane
@@ -4855,7 +4588,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleReader() {
-        let isOpening = !isPaneToggleActive(.reader)
+        let isOpening = !isPaneVisible(.reader)
         toggleDocumentPane(.reader)
         if isOpening {
             save()
@@ -4863,7 +4596,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleAgent() {
-        if !isPaneToggleActive(.agent), selectionContext != nil {
+        if !isPaneVisible(.agent), selectionContext != nil {
             recordNavigationPoint()
             revealDocumentPane(.agent, clearSelection: false)
             routeSelectionToConversation()
@@ -4874,7 +4607,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleNotes() {
-        let isOpening = !isPaneToggleActive(.notes)
+        let isOpening = !isPaneVisible(.notes)
         toggleDocumentPane(.notes)
         if isOpening {
             save()
@@ -4892,57 +4625,10 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// ⌘J：按窗格角色在「只看文稿」和「三栏都打开」之间切换，不看左右位置。
-    /// 沉浸对话没有文稿栏，这个动作不适用。
-    func toggleRightPane() {
-        guard layout != .immersiveConversation else { return }
-        let showingThree = layout.isDocumentThreePane && showReader && showAgent && showNotes
-        if showingThree {
-            recordNavigationPoint()
-            clearUnpinnedFloatingSelection()
-            paneState.setDocumentPanes(reader: true, agent: false, notes: false)
-            focus(.reader)
-            save()
-        } else {
-            setLayout(.documentAgentNotes)
-        }
-    }
-
-    func revealRightPane(focusing pane: PaneFocus = .notes) {
-        guard layout.hasCollapsibleRightPane else { return }
-        let targetVisible = pane == .agent ? showAgent : pane == .notes ? showNotes : showRightPane
-        if !targetVisible {
-            recordNavigationPoint()
-            clearUnpinnedFloatingSelection()
-        }
-        switch pane {
-        case .agent:
-            showAgent = true
-        case .notes:
-            showNotes = true
-        default:
-            showRightPane = true
-        }
-        focus(pane)
-        save()
-    }
-
     private func toggleDocumentPane(_ role: WorkspacePaneRole) {
         recordNavigationPoint()
         clearUnpinnedFloatingSelection()
-        if layoutIsImmersive {
-            toggleDocumentPaneFromImmersive(role)
-        } else {
-            let openingFromEmptyBoard = !showReader && !showAgent && !showNotes
-            let willShow = !isPaneVisible(role)
-            setDocumentPane(willShow, role)
-            // Empty board → first open: restore canonical 文稿 | 对话 | 笔记 left→right order.
-            if willShow && openingFromEmptyBoard {
-                threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
-            }
-            // Only assign when changed — pane visibility lives on paneState; avoid store thrash.
-            applyLayoutMatchingThreePaneOrderIfNeeded()
-        }
+        setDocumentPane(!isPaneVisible(role), role)
         if isPaneVisible(role) {
             focus(role.focus)
         } else if let nextFocus = visibleDocumentPaneOrder.first?.focus {
@@ -4959,9 +4645,6 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         recordNavigationPoint()
-        if !showReader && !showAgent && !showNotes {
-            threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
-        }
         revealDocumentPane(role)
         save()
     }
@@ -4970,53 +4653,8 @@ final class WorkspaceStore: ObservableObject {
         if clearSelection {
             clearUnpinnedFloatingSelection()
         }
-        if layoutIsImmersive {
-            setDocumentPaneSet(immersivePaneSet().union([role]))
-        } else {
-            setDocumentPane(true, role)
-        }
-        applyLayoutMatchingThreePaneOrderIfNeeded()
+        setDocumentPane(true, role)
         focus(role.focus)
-    }
-
-    private var layoutIsImmersive: Bool {
-        switch layout {
-        case .immersiveReading, .immersiveConversation, .immersiveWriting:
-            return true
-        case .documentAgentNotes, .documentNotesAgent:
-            return false
-        }
-    }
-
-    private func toggleDocumentPaneFromImmersive(_ role: WorkspacePaneRole) {
-        var visible = immersivePaneSet()
-        if visible.contains(role) {
-            visible.remove(role)
-        } else {
-            visible.insert(role)
-        }
-        setDocumentPaneSet(visible)
-        applyLayoutMatchingThreePaneOrderIfNeeded()
-    }
-
-    /// Assign `layout` only when the matched three-pane layout actually changes.
-    private func applyLayoutMatchingThreePaneOrderIfNeeded() {
-        let next = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
-        guard layout != next else { return }
-        layout = next
-    }
-
-    private func immersivePaneSet() -> Set<WorkspacePaneRole> {
-        switch layout {
-        case .immersiveReading:
-            return [.reader]
-        case .immersiveConversation:
-            return [.agent]
-        case .immersiveWriting:
-            return [.notes]
-        case .documentAgentNotes, .documentNotesAgent:
-            return Set(visibleDocumentPaneOrder)
-        }
     }
 
     private func setDocumentPaneSet(_ roles: Set<WorkspacePaneRole>) {
@@ -5061,13 +4699,10 @@ final class WorkspaceStore: ObservableObject {
             clearReaderSearchIfNeeded()
             return
         }
-        if !showDocumentSearch || layout == .immersiveConversation || layout == .immersiveWriting {
+        if !showDocumentSearch {
             recordNavigationPoint()
         }
         if !showDocumentSearch { paneState.resetReaderSearchSession() }
-        if layout == .immersiveConversation || layout == .immersiveWriting {
-            setLayout(.immersiveReading)
-        }
         showDocumentSearch = true
         focus(.reader)
         paneState.searchFocusRequest &+= 1
@@ -5305,14 +4940,6 @@ final class WorkspaceStore: ObservableObject {
     func openSourceReference(_ rawReference: String) -> Bool {
         guard let item = sourceReferenceItem(from: rawReference) else { return false }
         let reference = SourceReferenceTitle.parse(rawReference)
-        // Immersive chat only shows the agent pane — leave it so the reader/note is visible.
-        if layout == .immersiveConversation || layout == .immersiveWriting {
-            if item.isNotebookNote {
-                setLayout(.immersiveWriting)
-            } else {
-                setLayout(.immersiveReading)
-            }
-        }
         select(itemID: item.id)
         if item.isNotebookNote {
             showNotes = true
@@ -5445,9 +5072,6 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
         if item.isNotebookNote || kind == "note" {
-            if layout == .immersiveConversation || layout == .immersiveReading {
-                setLayout(.immersiveWriting)
-            }
             select(itemID: item.id)
             showNotes = true
             focus(.notes)
@@ -5467,73 +5091,11 @@ final class WorkspaceStore: ObservableObject {
         ))
     }
 
-    func setLayout(_ layout: WorkspaceLayout) {
-        let presetOrder = layout.defaultThreePaneOrder
-        let orderWillChange = presetOrder.map { WorkspacePaneRole.normalized($0) != normalizedThreePaneOrder } ?? false
-        if self.layout != layout || orderWillChange {
-            recordNavigationPoint()
-            clearUnpinnedFloatingSelection()
-        }
-        self.layout = layout
-        if let order = presetOrder {
-            threePaneOrder = order
-        }
-        if layout.isDocumentThreePane {
-            paneState.setDocumentPanes(reader: true, agent: true, notes: true)
-        }
-        let nextFocus: PaneFocus = switch layout {
-        case .immersiveConversation:
-            .agent
-        case .immersiveReading:
-            .reader
-        case .immersiveWriting:
-            .notes
-        default:
-            .reader
-        }
-        if layout == .immersiveReading {
-        }
-        if layout == .immersiveConversation {
-            showDocumentSearch = false
-            readerSearch = ""
-        }
-        focus(nextFocus)
-        save()
-    }
-
     var normalizedThreePaneOrder: [WorkspacePaneRole] {
         WorkspacePaneRole.normalized(threePaneOrder)
     }
 
-    func threePaneOrderLabel(compact: Bool = false) -> String {
-        let order = normalizedThreePaneOrder
-        let labels = order.map { role in
-            compact ? role.shortLabel(language: interfaceLanguage) : role.label(language: interfaceLanguage)
-        }
-        return labels.joined(separator: "-")
-    }
-
-    func swapThreePaneRoles(_ dragged: WorkspacePaneRole, over target: WorkspacePaneRole) {
-        guard dragged != target else { return }
-        guard layout.isDocumentThreePane else { return }
-        var order = normalizedThreePaneOrder
-        guard let draggedIndex = order.firstIndex(of: dragged),
-              let targetIndex = order.firstIndex(of: target) else { return }
-        order.swapAt(draggedIndex, targetIndex)
-        applyThreePaneOrder(order, focus: dragged.focus)
-    }
-
-    func swapThreePaneSecondaryPanes() {
-        guard layout.isDocumentThreePane else { return }
-        var order = normalizedThreePaneOrder
-        guard let notesIndex = order.firstIndex(of: .notes),
-              let agentIndex = order.firstIndex(of: .agent) else { return }
-        order.swapAt(notesIndex, agentIndex)
-        applyThreePaneOrder(order, focus: focusedPane)
-    }
-
     func moveThreePaneRole(_ role: WorkspacePaneRole, horizontalDelta: CGFloat, velocity: CGFloat? = nil) {
-        guard layout.isDocumentThreePane else { return }
         var order = normalizedThreePaneOrder
         guard let targetIndex = threePaneReorderTargetIndex(for: role, horizontalDelta: horizontalDelta),
               let currentIndex = order.firstIndex(of: role),
@@ -5548,7 +5110,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func beginThreePaneReorder(_ role: WorkspacePaneRole) {
-        guard layout.isDocumentThreePane else { return }
         threePaneReorder.releaseVelocity = nil
         threePaneReorderDrag = ThreePaneReorderDrag(role: role, translation: 0, targetIndex: nil)
     }
@@ -5576,7 +5137,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateThreePaneReorder(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
-        guard layout.isDocumentThreePane else { return }
         threePaneReorderDrag = ThreePaneReorderDrag(
             role: role,
             translation: horizontalDelta,
@@ -5598,7 +5158,6 @@ final class WorkspaceStore: ObservableObject {
         clearUnpinnedFloatingSelection()
         threePaneReorderDrag = nil
         threePaneOrder = order
-        layout = layoutMatchingThreePaneOrder(order)
         focus(nextFocus)
         save()
     }
@@ -5633,49 +5192,10 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    var hasPrimaryConversationPaneVisible: Bool {
-        switch layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            return showAgent
-        case .immersiveConversation:
-            return true
-        case .immersiveReading, .immersiveWriting:
-            return false
-        }
-    }
-
-    var isConversationSurfaceVisible: Bool {
-        if hasPrimaryConversationPaneVisible {
-            return true
-        }
-        switch layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            return false
-        case .immersiveConversation:
-            return true
-        case .immersiveReading, .immersiveWriting:
-            // Overlay chat surfaces (bottom drawer / corner) were removed; only the
-            // primary agent pane / immersive conversation counts as formal chat.
-            return false
-        }
-    }
-
-    var canShowSelectionPromptSurface: Bool {
-        true
-    }
-
-    var visibleAgentSurfaces: [AgentSurface] {
-        AgentSurface.allCases.filter { surface in
-            surface != .selectionFloat || canUseSelectionAgentSurface
-        }
-    }
-
     func setAgentSurface(_ surface: AgentSurface) {
         guard surface != .selectionFloat || canUseSelectionAgentSurface else { return }
         guard agentSurface != surface else { return }
-        recordNavigationPoint()
         agentSurface = surface
-        save()
     }
 
     func dismissFloatingSelectionAgent() {
@@ -5690,10 +5210,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func revealRichWritingSurface() {
-        if layout == .immersiveReading || layout == .immersiveConversation {
-            clearUnpinnedFloatingSelection()
-            layout = .immersiveWriting
-        }
         if !showNotes {
             clearUnpinnedFloatingSelection()
             showNotes = true
@@ -5715,12 +5231,10 @@ final class WorkspaceStore: ObservableObject {
         NavigationSnapshot(
             selectedItemID: selectedItemID,
             activeNotebookItemID: activeNotebookItemID,
-            layout: layout,
             showLibrary: showLibrary,
             showReader: showReader,
             showAgent: showAgent,
             showNotes: showNotes,
-            agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
             showDocumentSearch: showDocumentSearch,
             readerSearch: readerSearch,
             readerLocationID: readerLocationID,
@@ -5737,12 +5251,11 @@ final class WorkspaceStore: ObservableObject {
         defer { isRestoringNavigation = false }
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
-        layout = snapshot.layout
         showLibrary = snapshot.showLibrary
         showReader = snapshot.showReader
         showAgent = snapshot.showAgent
         showNotes = snapshot.showNotes
-        agentSurface = snapshot.agentSurface == .selectionFloat ? .hidden : snapshot.agentSurface
+        agentSurface = .hidden
         showDocumentSearch = snapshot.showDocumentSearch
         readerSearch = snapshot.readerSearch
         readerLocationID = snapshot.readerLocationID
@@ -5761,7 +5274,6 @@ final class WorkspaceStore: ObservableObject {
             id: supportsSectionLocation ? snapshot.readerLocationID : nil,
             title: supportsSectionLocation ? snapshot.readerLocationTitle : nil
         )
-        latestAgentLearningUpdate = nil
         syncActiveStudySession()
         recordCurrentStudyLocation(incrementVisit: false)
         clearUnpinnedFloatingSelection(keepContext: false)
@@ -5855,10 +5367,6 @@ final class WorkspaceStore: ObservableObject {
         modelName = value
         touchActiveAgentProfileMetadata()
         save()
-    }
-
-    func toggleAppearanceMode() {
-        setAppearanceMode(appearanceMode.toggled)
     }
 
     func setAppearanceMode(_ mode: WeiBeiAppearanceMode) {
@@ -5963,24 +5471,6 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    @discardableResult
-    func createAgentCredentialProfile(name: String? = nil) -> UUID {
-        let cleanedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let profile = AgentCredentialProfile(
-            name: cleanedName.isEmpty
-                ? ui("配置 \(agentCredentialProfiles.count + 1)", "Profile \(agentCredentialProfiles.count + 1)")
-                : cleanedName,
-            provider: agentProviderID,
-            authMethod: agentAuthMethod,
-            modelName: modelName,
-            baseURL: agentBaseURL
-        )
-        agentCredentialProfiles.append(profile)
-        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
-        selectAgentCredentialProfile(profile.id)
-        return profile.id
-    }
-
     /// Adding a connection takes its endpoint only from the form, never from
     /// the active profile. Validate before changing profiles or saving a key.
     @discardableResult
@@ -6005,15 +5495,6 @@ final class WorkspaceStore: ObservableObject {
         return profile.id
     }
 
-    func renameActiveAgentCredentialProfile(_ name: String) {
-        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
-        guard let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else { return }
-        agentCredentialProfiles[index].name = cleaned
-        agentCredentialProfiles[index].updatedAt = Date()
-        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
-    }
-
     func deleteActiveAgentCredentialProfile() {
         guard let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else { return }
         agentCredentialProfiles.remove(at: index)
@@ -6029,19 +5510,6 @@ final class WorkspaceStore: ObservableObject {
             agentAuthMethod = .apiKey
             save()
         }
-    }
-
-    func openAgentProviderConsole(login: Bool) {
-        let url = login
-            ? AgentProviderConsoleLinks.accountURL(for: agentProviderID)
-                ?? AgentProviderConsoleLinks.loginURL(for: agentProviderID)
-            : AgentProviderConsoleLinks.loginURL(for: agentProviderID)
-        guard let url else { return }
-#if targetEnvironment(macCatalyst)
-        _ = CatalystDesktopWindow.shared.open(url)
-#else
-        NSWorkspace.shared.open(url)
-#endif
     }
 
     private func touchActiveAgentProfileMetadata() {
@@ -6575,6 +6043,14 @@ final class WorkspaceStore: ObservableObject {
         guard !courseWorkspacePresented else { return }
         let documentAnchor = documentAnchor ?? anchor?.textAnchor.map { SelectionDocumentAnchor(text: $0) }
         let cleaned = MarkdownSelectionSanitizer.clean(text)
+        if source == .document, let request = interaction.readerSelectionTranslation, !cleaned.isEmpty {
+            // Hosted readers can repeat the same selection when the capsule loses focus.
+            if request.selection.itemID == selectedItemID,
+               request.selection.text == cleaned, request.selection.documentAnchor == documentAnchor {
+                return
+            }
+            interaction.readerSelectionTranslation = nil
+        }
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
             if automaticSelection?.source == source {
                 clearAutomaticSelectionAttachment()
@@ -6873,20 +6349,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func migrateNoteSourceLinksFromMarkdown() {
-        let previousCount = noteSourceLinks.count
-        for note in allItems where note.isNotebookNote {
-            let markdown = noteMarkdownText(for: note)
-            for rawLine in markdown.components(separatedBy: .newlines) {
-                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard line.contains("来源：") || line.localizedCaseInsensitiveContains("source:") else { continue }
-                guard let source = sourceReferenceItem(from: line), source.isCourseMaterial else { continue }
-                addNoteSourceLink(noteItemID: note.id, sourceItemID: source.id)
-            }
-        }
-        if noteSourceLinks.count != previousCount { save() }
-    }
-
     @discardableResult
     func sanitizeNoteSourceLinks() -> Bool {
         let previous = noteSourceLinks
@@ -6973,27 +6435,6 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         return studyLocationsByCourseID != previous
-    }
-
-    private func migrateCourseStudyLocationsFromLegacyIfNeeded() {
-        for point in courseResumePoints {
-            guard let location = point.materialLocation else { continue }
-            let courseKey = point.courseID.uuidString
-            var locations = studyLocationsByCourseID[courseKey] ?? [:]
-            locations[location.itemID] = locations[location.itemID] ?? location
-            studyLocationsByCourseID[courseKey] = locations
-        }
-        for (itemID, location) in studyLocationsByItemID {
-            let courseIDs = courseMembershipIndex.courseIDs(for: itemID)
-            guard courseIDs.count == 1, let courseID = courseIDs.first else {
-                continue
-            }
-            let courseKey = courseID.uuidString
-            var locations = studyLocationsByCourseID[courseKey] ?? [:]
-            locations[itemID] = locations[itemID] ?? location
-            studyLocationsByCourseID[courseKey] = locations
-        }
-        _ = sanitizeCourseStudyLocations()
     }
 
     @discardableResult
@@ -7839,7 +7280,6 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: "最早一条课程回答。",
             source: "课程 Chat",
-            backend: .native,
             actions: [
                 AgentReplyAction(
                     kind: .writeNote,
@@ -7863,7 +7303,6 @@ final class WorkspaceStore: ObservableObject {
             role: .assistant,
             text: "课程回答正文必须保留。",
             source: "课程 Chat",
-            backend: .native,
             sources: [validSource, foreignSourceWithoutCourseID],
             actions: [validAction, foreignActionWithoutCourseID],
             memoryUpdate: AgentReplyMemoryUpdate(
@@ -8583,7 +8022,6 @@ final class WorkspaceStore: ObservableObject {
         var changedMemoryIDs: [UUID] = []
         var unchangedMemoryIDs: [UUID] = []
         var changedMemoryIDsByScope: [LearningMemoryScope: Set<UUID>] = [:]
-        var acceptedEntries: [StudyAgentMemoryUpdateEntry] = []
         let now = Date()
         for validated in validatedEntries {
             var memoryEntries = entriesByScope[validated.scope] ?? []
@@ -8606,15 +8044,6 @@ final class WorkspaceStore: ObservableObject {
                 memoryEntries[index].updatedAt = now
                 changedMemoryIDs.append(memoryID)
                 changedMemoryIDsByScope[validated.scope, default: []].insert(memoryID)
-                acceptedEntries.append(
-                    StudyAgentMemoryUpdateEntry(
-                        memoryID: memoryID.uuidString.lowercased(),
-                        kind: memoryEntries[index].kind,
-                        text: memoryEntries[index].text,
-                        evidence: memoryEntries[index].evidence,
-                        origin: memoryEntries[index].origin
-                    )
-                )
             } else {
                 let normalized = Self.normalizedMemoryText(validated.text)
                 if let existing = memoryEntries.first(where: {
@@ -8638,15 +8067,6 @@ final class WorkspaceStore: ObservableObject {
                 memoryEntries.append(entry)
                 changedMemoryIDs.append(entry.id)
                 changedMemoryIDsByScope[validated.scope, default: []].insert(entry.id)
-                acceptedEntries.append(
-                    StudyAgentMemoryUpdateEntry(
-                        memoryID: entry.id.uuidString.lowercased(),
-                        kind: entry.kind,
-                        text: entry.text,
-                        evidence: entry.evidence,
-                        origin: entry.origin
-                    )
-                )
             }
             entriesByScope[validated.scope] = memoryEntries
         }
@@ -8712,15 +8132,6 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
-        var acceptedUpdate = update
-        acceptedUpdate.entries = acceptedEntries
-        // A5b applies valid resolutions immediately; the persisted reply attachment
-        // records the changed IDs, so the legacy confirmation strip must not ask again.
-        acceptedUpdate.resolutions = []
-        if !changedMemoryIDs.isEmpty, activeStudySessionID == target.sessionID {
-            latestAgentLearningUpdate = acceptedUpdate
-            latestAgentLearningUpdateQuestion = expectedUserQuestion
-        }
         let resultIDs = changedMemoryIDs + unchangedMemoryIDs.filter { !changedMemoryIDs.contains($0) }
         let appliedTexts = resultIDs.compactMap { id in
             scopes.lazy.compactMap { scope in
@@ -8872,8 +8283,6 @@ final class WorkspaceStore: ObservableObject {
     ) async -> NativeStorePersistReceipt {
         let previousLearningStates = learningMemoryStates
         let previousStudySessions = studySessions
-        let previousLatestUpdate = latestAgentLearningUpdate
-        let previousLatestQuestion = latestAgentLearningUpdateQuestion
         let receipt = applyLearningUpdate(
             update,
             expectedContextRevision: expectedContextRevision,
@@ -8887,8 +8296,6 @@ final class WorkspaceStore: ObservableObject {
         let appliedStudySession = studySessions.first {
             $0.id == target.sessionID
         }
-        let appliedLatestUpdate = latestAgentLearningUpdate
-        let appliedLatestQuestion = latestAgentLearningUpdateQuestion
         if let courseID = target.courseID {
             dirtyPortableCourseIDs.insert(courseID)
         }
@@ -8974,12 +8381,6 @@ final class WorkspaceStore: ObservableObject {
                studySessions[currentIndex].updatedAt == appliedStudySession.updatedAt {
                 studySessions[currentIndex].updatedAt = previous.updatedAt
             }
-        }
-        if latestAgentLearningUpdate == appliedLatestUpdate {
-            latestAgentLearningUpdate = previousLatestUpdate
-        }
-        if latestAgentLearningUpdateQuestion == appliedLatestQuestion {
-            latestAgentLearningUpdateQuestion = previousLatestQuestion
         }
         if let courseID = target.courseID {
             dirtyPortableCourseIDs.insert(courseID)
@@ -9082,29 +8483,6 @@ final class WorkspaceStore: ObservableObject {
             return NativeStorePersistReceipt(status: .failed, message: "魏碑没有写入这次课程档案，已恢复更新前的内容，同时发生的修改不受影响。请重试。")
         }
         return NativeStorePersistReceipt(status: .failed, message: "魏碑无法确认这次课程档案是否已经写入磁盘。魏碑里仍是更新前的内容；请先不要退出，然后重试。")
-    }
-
-    func isLearningMemoryResolved(_ memoryID: String, in scope: LearningMemoryScope) -> Bool {
-        guard let id = UUID(uuidString: memoryID) else { return false }
-        return learningMemoryEntries(in: scope)
-            .first(where: { $0.id == id })?
-            .status == .resolved
-    }
-
-    func confirmLearningMemoryResolution(
-        _ resolution: StudyAgentMemoryResolution,
-        in scope: LearningMemoryScope
-    ) {
-        guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
-              let question = latestAgentLearningUpdateQuestion,
-              StudyAgentCurrentTurnEvidence.matches(resolution.evidence, question: question),
-              let memoryID = UUID(uuidString: resolution.memoryID) else { return }
-        setLearningMemoryStatus(
-            memoryID,
-            in: scope,
-            status: .resolved,
-            resolutionEvidence: String(resolution.evidence.prefix(400))
-        )
     }
 
     func updateLearningMemory(
@@ -9229,28 +8607,11 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func restoreLearningMemoryResolution(
-        _ resolution: StudyAgentMemoryResolution,
-        in scope: LearningMemoryScope
-    ) {
-        guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
-              let memoryID = UUID(uuidString: resolution.memoryID) else { return }
-        restoreLearningMemory(memoryID, in: scope)
-    }
-
     private static func normalizedMemoryText(_ text: String) -> String {
         text
             .lowercased()
             .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
             .joined()
-    }
-
-    func askToOrganizeNote() {
-        agentDraft = ui(
-            "请根据\(agentPromptScope)，把笔记整理成更清晰的大纲，保留来源信息，并标出缺少证据的位置。",
-            "Use \(agentPromptScope) to organize the note into a clearer outline, keep source references, and mark places where evidence is missing."
-        )
-        submitAgentDraft()
     }
 
     func askSelection() {
@@ -9280,11 +8641,6 @@ final class WorkspaceStore: ObservableObject {
                     "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。",
                     "Use \(agentPromptScope) to summarize key points and follow-up questions."
                 )
-                if layout == .immersiveReading {
-                    layout = .immersiveConversation
-                    showAgent = true
-                    agentSurface = .hidden
-                }
                 focus(.agent)
             }
         }
@@ -9341,7 +8697,7 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func beginOrReuseSelectionAskThread(for selection: SelectionContext) throws -> SelectionAskThread {
-        let parentID = isConversationSurfaceVisible ? activeStudySessionID : nil
+        let parentID = showAgent ? activeStudySessionID : nil
         let normalized = SelectionAttachmentMerge.normalized(selection.text)
         let itemID = selection.itemID
             ?? (selection.source == .note ? activeNotebookItemID : selectedItemID)
@@ -9409,12 +8765,6 @@ final class WorkspaceStore: ObservableObject {
             save()
         }
         armDeletionUndo(.selectionAsk(thread: thread, session: session))
-    }
-
-    func selectionAskThread(matchingText text: String) -> SelectionAskThread? {
-        let normalized = SelectionAttachmentMerge.normalized(text)
-        guard !normalized.isEmpty else { return nil }
-        return selectionAskThreads.first { $0.normalizedText == normalized }
     }
 
     private func loadLegacySelectionAskThreadsIfWorkspaceFieldMissing() {
@@ -10056,7 +9406,6 @@ final class WorkspaceStore: ObservableObject {
                     text: previousReply?.text ?? "",
                     contentBlocks: previousReply?.contentBlocks ?? [],
                     source: sourceTitle,
-                    backend: .native,
                     completionState: .generating,
                     sources: previousReply?.sources ?? [],
                     actions: previousReply?.actions ?? [],
@@ -10099,7 +9448,6 @@ final class WorkspaceStore: ObservableObject {
                 if activeStudySessionID == target.sessionID {
                     lastFailedAgentQuestion = nil
                     lastAgentFailureKind = nil
-                    latestAgentLearningUpdate = nil
                     if !sentSelectionIDs.isEmpty {
                         // No withAnimation here: animating attachment chrome while chat
                         // PlatformViews remasure was part of the send-path main-thread freeze.
@@ -10135,7 +9483,6 @@ final class WorkspaceStore: ObservableObject {
                 let sourceReference = SourceReferenceTitle.parse(sentMaterialTitle)
                 let request = StudyAgentRequest(
                     id: requestID,
-                    purpose: .conversation,
                     // Local preparation failures never entered the model ledger.
                     reusingLastUserMessage: reusingLastUserMessage
                         && (previousReply?.requestContext != nil || previousReply?.completionState == .completed),
@@ -10205,7 +9552,6 @@ final class WorkspaceStore: ObservableObject {
                     _ = updateAgentMessage(messageID, in: target.sessionID) {
                         $0.text = reply.text
                         $0.contentBlocks = visibleContentBlocks
-                        $0.backend = reply.backend
                         $0.completionState = .completed
                         $0.sources = sources
                         $0.failureKind = nil
@@ -10524,8 +9870,7 @@ final class WorkspaceStore: ObservableObject {
            WeiBeiSafetyTestMode.isEnabled {
             selfCheckCapturedAgentRequest = request
             return StudyAgentReply(
-                text: "课程请求授权自检完成",
-                backend: .native
+                text: "课程请求授权自检完成"
             )
         }
 #endif
@@ -10838,7 +10183,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func verifiedCourseOwnedNoteAccess(
-        _ item: StudyItem
+        _ item: StudyItem,
+        refreshTracking: Bool = true
     ) -> VerifiedCourseOwnedNoteAccess? {
         guard item.isNotebookNote,
               case .courseOwned(let courseID, _) = item.storage,
@@ -10872,20 +10218,22 @@ final class WorkspaceStore: ObservableObject {
         // resolveTrackedImportedFile 一致）：课程内文件以课程相对路径为准，
         // 路径下文件可读即接受。identity 不一致（iCloud 驱逐重下换 inode、
         // APFS 卷号漂移等）时刷新记录并继续，最多记一条日志（计划 §5 阶段5）。
-        if course.sourceRootIdentity != rootIdentity {
-            if let courseIndex = courses.firstIndex(where: { $0.id == courseID }) {
-                courses[courseIndex].sourceRootIdentity = rootIdentity
+        if refreshTracking {
+            if course.sourceRootIdentity != rootIdentity {
+                if let courseIndex = courses.firstIndex(where: { $0.id == courseID }) {
+                    courses[courseIndex].sourceRootIdentity = rootIdentity
+                }
+                WeiBeiLog.workspace.notice("note_access_root_identity_refreshed")
             }
-            WeiBeiLog.workspace.notice("note_access_root_identity_refreshed")
-        }
-        if item.importedFileIdentity != fileIdentity {
-            if let itemIndex = importedItems.firstIndex(where: { $0.id == item.id }) {
-                importedItems[itemIndex].importedFileIdentity = fileIdentity
+            if item.importedFileIdentity != fileIdentity {
+                if let itemIndex = importedItems.firstIndex(where: { $0.id == item.id }) {
+                    importedItems[itemIndex].importedFileIdentity = fileIdentity
+                }
+                WeiBeiLog.workspace.notice("note_access_file_identity_refreshed")
             }
-            WeiBeiLog.workspace.notice("note_access_file_identity_refreshed")
-        }
-        if courseItemMemberships[membershipIndex].entryIdentity != fileIdentity {
-            courseItemMemberships[membershipIndex].entryIdentity = fileIdentity
+            if courseItemMemberships[membershipIndex].entryIdentity != fileIdentity {
+                courseItemMemberships[membershipIndex].entryIdentity = fileIdentity
+            }
         }
         return VerifiedCourseOwnedNoteAccess(
             courseID: courseID,
@@ -11016,7 +10364,7 @@ final class WorkspaceStore: ObservableObject {
         var changed = false
         var canonicalIDByIdentity: [ImportedFileIdentity: String] = [:]
         for item in importedItems
-        where item.importedFileIdentity != nil && !item.id.hasPrefix("file:") {
+        where item.importedFileIdentity != nil {
             if let identity = item.importedFileIdentity,
                canonicalIDByIdentity[identity] == nil {
                 canonicalIDByIdentity[identity] = item.id
@@ -11032,16 +10380,6 @@ final class WorkspaceStore: ObservableObject {
                 item.importedFileIdentity = resolvedIdentity
                 changed = true
             }
-            let isManagedByCourseLibrary: Bool = {
-                switch item.storage {
-                case .courseOwned, .common:
-                    return true
-                case .bundledSample:
-                    return false
-                }
-            }()
-            _ = isManagedByCourseLibrary
-
             if let resolvedIdentity,
                let canonicalID = canonicalIDByIdentity[resolvedIdentity],
                canonicalID != item.id {
@@ -11053,22 +10391,10 @@ final class WorkspaceStore: ObservableObject {
                     changed = true
                     continue
                 }
-                if item.id.hasPrefix("file:") {
-                    let oldID = item.id
-                    item.id = Self.makeImportedItemID()
-                    replaceItemIDEverywhere(oldID, with: item.id)
-                    changed = true
-                }
                 migratedItems.append(item)
                 continue
             }
 
-            if resolvedIdentity != nil, item.id.hasPrefix("file:") {
-                let oldID = item.id
-                item.id = Self.makeImportedItemID()
-                replaceItemIDEverywhere(oldID, with: item.id)
-                changed = true
-            }
             if let resolvedIdentity {
                 canonicalIDByIdentity[resolvedIdentity] = item.id
             }
@@ -11177,6 +10503,14 @@ final class WorkspaceStore: ObservableObject {
         }
         courseNoteLoadTasksByItemID.removeValue(forKey: oldID)?.cancel()
         courseNoteLoadGenerationByItemID.removeValue(forKey: oldID)
+        if let oldIndex = readerTabIDs.firstIndex(of: oldID) {
+            if readerTabIDs.contains(newID) {
+                readerTabIDs.removeAll { $0 == oldID }
+            } else {
+                readerTabIDs[oldIndex] = newID
+                readerTabIDs.removeAll { $0 == oldID }
+            }
+        }
         if selectedItemID == oldID { selectedItemID = newID }
         if activeNotebookItemID == oldID { activeNotebookItemID = newID }
         if courseWorkspaceTargetItemID == oldID { courseWorkspaceTargetItemID = newID }
@@ -11242,9 +10576,6 @@ final class WorkspaceStore: ObservableObject {
 
         if notebookCreationDraft?.sourceItemID == oldID {
             notebookCreationDraft?.sourceItemID = newID
-        }
-        if notebookRenameDraft?.itemID == oldID {
-            notebookRenameDraft?.itemID = newID
         }
         materialNotePairings = replacingItemID(
             oldID,
@@ -11323,26 +10654,6 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func layoutMatchingThreePaneOrder(_ order: [WorkspacePaneRole]) -> WorkspaceLayout {
-        let normalized = WorkspacePaneRole.normalized(order)
-        if normalized == [.reader, .notes, .agent] {
-            return .documentNotesAgent
-        }
-        return .documentAgentNotes
-    }
-
-    private var rightPaneRevealFocus: PaneFocus {
-        if layout.isDocumentThreePane {
-            return normalizedThreePaneOrder.last?.focus ?? .notes
-        }
-        switch layout {
-        case .documentNotesAgent, .immersiveConversation:
-            return .agent
-        default:
-            return .notes
-        }
-    }
-
     func invalidateAgentContext(restoreAgentDraft _: Bool = true) {
         agentContextRevision &+= 1
         lastAgentReplyContextRevision = nil
@@ -11394,7 +10705,7 @@ final class WorkspaceStore: ObservableObject {
     private func collapseSelectionFloatIntoConversationIfVisible() {
         // An answer still arriving stays beside the passage.
         guard !(keepFloatingSelectionForAnswer && isFloatingChatRunning) else { return }
-        guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }
+        guard showAgent, agentSurface == .selectionFloat else { return }
         agentSurface = .hidden
         selectionAnchor = nil
         keepFloatingSelectionForAnswer = false
@@ -11447,7 +10758,7 @@ final class WorkspaceStore: ObservableObject {
                     return
                 }
                 lastCourseNoteReadRanOnMainThread = result.ranOnMainThread
-                let markdown = cleanLegacyPlaceholder(result.markdown)
+                let markdown = result.markdown
                 loadedCourseNoteTextByItemID[itemID] = markdown
                 let previousDigest = importedItems[currentIndex].contentDigest
                 fileMissingSinceByItemID.removeValue(forKey: itemID)
@@ -11531,23 +10842,21 @@ final class WorkspaceStore: ObservableObject {
             if case .courseOwned = item.storage {
                 scheduleCourseNoteLoad(item)
             }
-            return cleanLegacyPlaceholder(cached)
+            return cached
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
             if item.editsBackingMarkdownFile, notesByItemID[item.id] == nil {
                 // P0 降级标记：展示的是模板而非正文；留痕让写回守卫拒绝把模板盖回磁盘。
                 setNoteFileError(noteFileUnavailableMessage(for: item), for: item.id)
             }
-            return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+            return notesByItemID[item.id] ?? defaultNote(for: item)
         }
         if case .courseOwned = item.storage {
             if let loaded = loadedCourseNoteTextByItemID[item.id] {
                 return loaded
             }
             scheduleCourseNoteLoad(item)
-            return cleanLegacyPlaceholder(
-                notesByItemID[item.id] ?? defaultNote(for: item)
-            )
+            return notesByItemID[item.id] ?? defaultNote(for: item)
         }
         do {
             let data = try Data(contentsOf: url)
@@ -11560,7 +10869,7 @@ final class WorkspaceStore: ObservableObject {
             lastSelfWrittenNoteDigestsByItemID[item.id] = digest
             // P0：读盘成功即自愈降级标记，恢复后续正常写回。
             setNoteFileError(nil, for: item.id)
-            return cleanLegacyPlaceholder(markdown)
+            return markdown
         } catch {
             if notesByItemID[item.id] == nil {
                 // P0 降级标记：读盘失败且无草稿，展示的是模板而非正文。
@@ -11573,7 +10882,7 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             showImportantOperationError(ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)"))
-            return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+            return notesByItemID[item.id] ?? defaultNote(for: item)
         }
     }
 
@@ -11624,7 +10933,7 @@ final class WorkspaceStore: ObservableObject {
                diskDigest == Self.noteContentDigest(Data(noteText.utf8)) {
                 return
             }
-            noteText = cleanLegacyPlaceholder(markdown)
+            noteText = markdown
             noteBackingContentDigestsByItemID[itemID] = diskDigest
             // 外部改动且无脏输入：静默采纳磁盘，同步备份基线。
             lastSelfWrittenNoteDigestsByItemID[itemID] = diskDigest
@@ -11688,7 +10997,7 @@ final class WorkspaceStore: ObservableObject {
         noteBackingContentDigestsByItemID[itemID] = writtenDigest
         lastSelfWrittenNoteDigestsByItemID[itemID] = writtenDigest
         loadedCourseNoteTextByItemID[itemID] =
-            cleanLegacyPlaceholder(markdown)
+            markdown
         courseDocumentSearchIndex.schedule([importedItems[index]])
     }
 
@@ -11729,7 +11038,7 @@ final class WorkspaceStore: ObservableObject {
         }
         lastWork = snapshot.lastWork
         importedItems = snapshot.importedItems
-        replaceNoteDrafts(snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder))
+        replaceNoteDrafts(snapshot.notesByItemID)
         // 解码容忍旧 pendingNoteWrites；S2 写回路径不再依赖冲突状态机，启动时一次性迁移。
         if let persistedPendingNoteWrites = snapshot.pendingNoteWritesByItemID {
             pendingNoteWritesByItemID = persistedPendingNoteWrites
@@ -11743,14 +11052,17 @@ final class WorkspaceStore: ObservableObject {
             pendingNoteWritesByItemID = [:]
         }
         noteBackingContentDigestsByItemID = snapshot.noteBackingContentDigestsByItemID ?? [:]
+        var restoredTabIDs: [String] = []
+        var seenTabIDs: Set<String> = []
+        for id in snapshot.readerTabIDs ?? [] where seenTabIDs.insert(id).inserted {
+            if importedItems.contains(where: { $0.id == id && $0.isCourseMaterial }) {
+                restoredTabIDs.append(id)
+            }
+        }
+        readerTabIDs = restoredTabIDs
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
-        courses = (snapshot.courses ?? []).map { course in
-            var next = course
-            next.sourceRootPath = nil
-            next.sourceRootBookmarkData = nil
-            return next
-        }
+        courses = snapshot.courses ?? []
         persistedWorkspaceCourseIDs = Set(courses.map(\.id))
         coursePortableStateRevisions = Dictionary(
             uniqueKeysWithValues: (snapshot.coursePortableStateRevisions ?? [:])
@@ -11773,13 +11085,12 @@ final class WorkspaceStore: ObservableObject {
         courseLibraryRootIdentity = snapshot.courseLibraryRootIdentity
         courseLibraryRootBookmarkData = snapshot.courseLibraryRootBookmarkData
         noteSourceLinks = snapshot.noteSourceLinks ?? []
-        noteSourceLinksMigrationVersion = snapshot.noteSourceLinksMigrationVersion ?? 0
         materialNotePairings = snapshot.materialNotePairings ?? [:]
         noteMaterialPairings = snapshot.noteMaterialPairings ?? [:]
         studyLocationsByItemID = snapshot.studyLocationsByItemID ?? [:]
         studyLocationsByCourseID = snapshot.studyLocationsByCourseID ?? [:]
         courseResumePoints = snapshot.courseResumePoints ?? []
-        migrateCourseStudyLocationsFromLegacyIfNeeded()
+        _ = sanitizeCourseStudyLocations()
         learningMemoryStates = snapshot.learningMemoryStates ?? []
         courseKnowledgeProfiles = snapshot.courseKnowledgeProfiles ?? []
         learningMemoryScopeMigrationVersion = snapshot.learningMemoryScopeMigrationVersion ?? 0
@@ -11824,36 +11135,13 @@ final class WorkspaceStore: ObservableObject {
         if let agentBaseURL = snapshot.agentBaseURL {
             self.agentBaseURL = agentBaseURL
         }
-        // Legacy field: still read for older workspaces; threePaneOrder now owns drag order.
-        var migratedRetiredSplitLayout = false
-        if let persistedLayoutRaw = snapshot.workspaceLayout {
-            if let workspaceLayout = WorkspaceLayout.resolve(persistedValue: persistedLayoutRaw) {
-                layout = workspaceLayout
-                if let order = workspaceLayout.defaultThreePaneOrder {
-                    threePaneOrder = order
-                }
-            } else if persistedLayoutRaw == WorkspaceLayout.retiredSplitPersistedValue {
-                migratedRetiredSplitLayout = true
-            }
-        }
         if let threePaneOrder = snapshot.threePaneOrder {
             self.threePaneOrder = WorkspacePaneRole.normalized(threePaneOrder)
         }
-        if let agentSurface = snapshot.agentSurface {
-            self.agentSurface = agentSurface == .selectionFloat ? .hidden : agentSurface
-        }
-        let legacyRightPane = snapshot.showRightPane
         showReader = snapshot.showReader ?? true
-        showAgent = snapshot.showAgent ?? legacyRightPane ?? true
-        showNotes = snapshot.showNotes ?? legacyRightPane ?? true
+        showAgent = snapshot.showAgent ?? true
+        showNotes = snapshot.showNotes ?? true
         showDailyInspiration = snapshot.showDailyInspiration ?? true
-        if migratedRetiredSplitLayout {
-            // Retired 对半布局 → workbench：阅读+笔记可见、对话隐藏，保留既有自由顺序。
-            layout = layoutMatchingThreePaneOrder(self.threePaneOrder)
-            showReader = true
-            showNotes = true
-            showAgent = false
-        }
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
@@ -11869,31 +11157,6 @@ final class WorkspaceStore: ObservableObject {
             self.interfaceTextScale = interfaceTextScale
         }
         noteText = noteText(for: activeNoteItem)
-    }
-
-    private func cleanLegacyPlaceholder(_ text: String) -> String {
-        text
-            .replacingOccurrences(
-                of: #"(?m)^- (?:静默洞察|Agent 洞察)：(.+)\n  来源：(.+)$"#,
-                with: "> [!note] 阅读线索\n>\n> $1\n>\n> 来源：$2",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?m)^> \[!note\] 阅读线索\n> ([^\n])"#,
-                with: "> [!note] 阅读线索\n>\n> $1",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?m)^> \[!quote\]([^\n]*)\n> ([^\n])"#,
-                with: "> [!quote]$1\n>\n> $2",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: "\n> 待整理摘录：当前选区\n", with: "\n")
-            .replacingOccurrences(of: "\n> 待整理摘录：当前选区", with: "")
-            .replacingOccurrences(of: "\n* <br />\n", with: "\n")
-            .replacingOccurrences(of: "\n* <br />", with: "")
-            .replacingOccurrences(of: "\n- <br />\n", with: "\n")
-            .replacingOccurrences(of: "\n- <br />", with: "")
     }
 
     private var persistedStudySessions: [StudySession] {
@@ -11917,19 +11180,13 @@ final class WorkspaceStore: ObservableObject {
         return activeStudySessionID
     }
 
-    private var persistableCourses: [Course] {
-        courses.map { course in
-            var next = course
-            next.sourceRootPath = nil
-            next.sourceRootBookmarkData = nil
-            return next
-        }
-    }
-
     private func makePersistedWorkspaceSnapshot()
         -> (snapshot: PersistedWorkspace, resumePoints: [CourseResumePoint]) {
         captureLastWork()
         let resumePoints = sanitizedCourseResumePoints()
+        // An association without a course entry cannot be restored from a
+        // course directory or its portable state.
+        let unlinkedCourseMemberships = courseItemMemberships.filter { $0.courseRelativePath == nil }
         return (
             PersistedWorkspace(
                 lastWork: lastWork,
@@ -11943,17 +11200,16 @@ final class WorkspaceStore: ObservableObject {
                     ? nil
                     : noteBackingContentDigestsByItemID,
                 selectedItemID: selectedItemID,
+                readerTabIDs: readerTabIDs.isEmpty ? nil : readerTabIDs,
                 activeNotebookItemID: activeNotebookItemID,
-                courses: persistableCourses,
-                courseItemMemberships: nil,
+                courses: courses,
+                courseItemMemberships: unlinkedCourseMemberships.isEmpty ? nil : unlinkedCourseMemberships,
                 activeCourseID: activeCourseID,
                 courseLibraryRootPath: courseLibraryRootPath,
                 courseLibraryRootIdentity: courseLibraryRootIdentity,
                 courseLibraryRootBookmarkData:
                     courseLibraryRootBookmarkData,
                 noteSourceLinks: noteSourceLinks,
-                noteSourceLinksMigrationVersion:
-                    noteSourceLinksMigrationVersion,
                 materialNotePairings: materialNotePairings,
                 noteMaterialPairings: noteMaterialPairings,
                 studyLocationsByItemID: studyLocationsByItemID,
@@ -11985,15 +11241,10 @@ final class WorkspaceStore: ObservableObject {
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-                workspaceLayout: layout.rawValue,
                 threePaneOrder: normalizedThreePaneOrder,
-                agentSurface:
-                    agentSurface == .selectionFloat ? .hidden : agentSurface,
-                showLibrary: nil,
                 showReader: showReader,
                 showAgent: showAgent,
                 showNotes: showNotes,
-                showRightPane: showRightPane,
                 showDailyInspiration: showDailyInspiration,
                 appearanceModeRaw: appearanceMode.rawValue,
                 adaptImportedDocumentColors: adaptImportedDocumentColors,
@@ -12639,19 +11890,6 @@ final class WorkspaceStore: ObservableObject {
     private static func environmentValue(_ name: String) -> String {
         (ProcessInfo.processInfo.environment[name] ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func removeLegacyCourseIndex(in directory: URL) {
-        for version in ["v1", "v2"] {
-            let legacy = directory.appendingPathComponent("course-search-\(version).sqlite3")
-            for url in [
-                legacy,
-                URL(fileURLWithPath: legacy.path + "-wal"),
-                URL(fileURLWithPath: legacy.path + "-shm"),
-            ] where FileManager.default.fileExists(atPath: url.path) {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
     }
 
     private static func workspaceRootDirectory() -> URL? {

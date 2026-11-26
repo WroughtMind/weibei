@@ -365,10 +365,4 @@ public actor NativeAgentLedger {
         }
     }
 
-    /// Fork = completed-turn prefix snapshot.
-    public func forkPrefix(upToTurn turn: Int, to url: URL) throws -> NativeAgentLedger {
-        let end = events.lastIndex { $0.type == .turnEnd && $0.finishReason == .completed && ($0.turn ?? 0) <= turn }
-        try Self.writeEvents(end.map { Array(events[...$0]) } ?? [], to: url)
-        return try NativeAgentLedger(fileURL: url)
-    }
 }

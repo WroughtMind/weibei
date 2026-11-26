@@ -23,7 +23,7 @@ final class DailyWorkflowTests: XCTestCase {
                                      chatID: try XCTUnwrap(run.chatID))
             started.fulfill()
             try await Task.sleep(for: .milliseconds(250))
-            return StudyAgentReply(text: "回答：" + request.question, backend: .native)
+            return StudyAgentReply(text: "回答：" + request.question)
         }
         let first = try XCTUnwrap(store.createStudySession(courseID: nil))
         store.agentDraft = "问题甲"
@@ -54,7 +54,7 @@ final class DailyWorkflowTests: XCTestCase {
         store.selfCheckAgentResponder = { request in
             stopping.fulfill()
             try await Task.sleep(for: .seconds(10))
-            return StudyAgentReply(text: request.question, backend: .native)
+            return StudyAgentReply(text: request.question)
         }
         store.agentDraft = "退出甲"
         XCTAssertNil(store.askAgent())

@@ -103,7 +103,7 @@ final class NativeProviderSearchFailureTests: XCTestCase {
             }
         }
         let capture = Capture()
-        let question = StudyAgentRequest(purpose: .conversation, question: "查阅公开资料",
+        let question = StudyAgentRequest(question: "查阅公开资料",
             materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "r1")
         let prompt = NativePromptAssembler.webiSystemPrompt(bundledText: "测试", webSearchAvailable: true)
         let loop = NativeAgentLoop()
@@ -165,7 +165,7 @@ final class NativeProviderSearchFailureTests: XCTestCase {
             let adapter = SearchRecoveryAdapter([(chunks, failure), ([], failure)])
             do {
                 _ = try await NativeAgentLoop().run(
-                    request: .init(purpose: .conversation, question: "查资料", materialTitle: "", materialText: "",
+                    request: .init(question: "查资料", materialTitle: "", materialText: "",
                                    noteTitle: "", noteText: "", contextRevision: "r1"),
                     ledger: ledger, registry: registry, adapter: adapter, model: "test", hostToolHandler: nil,
                     systemPrompt: "测试", progress: nil)

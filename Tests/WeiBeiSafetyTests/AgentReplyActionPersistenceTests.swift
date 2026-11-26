@@ -14,7 +14,7 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
         let (root, store, _, _) = try await makeWorkspaceAsync()
         defer { try? FileManager.default.removeItem(at: root) }
         let session = try XCTUnwrap(store.createStudySession(courseID: nil))
-        let request = StudyAgentRequest(purpose: .conversation, question: "新建一份通用笔记", materialTitle: "",
+        let request = StudyAgentRequest(question: "新建一份通用笔记", materialTitle: "",
             materialText: "", noteTitle: "", noteText: "", contextRevision: "global-note")
         let action = AgentReplyAction(kind: .writeNote, proposedMarkdown: "# 通用笔记\n\n正文", contextRevision: request.contextRevision)
         let reply = AgentMessage(role: .assistant, text: "建议", source: nil, actions: [action],
@@ -64,7 +64,7 @@ final class AgentReplyActionPersistenceTests: XCTestCase {
 
             let write = AgentReplyAction(kind: .writeNote, targetItemID: noteID, proposedMarkdown: "追加正文", contextRevision: "request")
             let writeReply = try await self.append(write, to: store, courseID: courseID, chatID: chatID)
-            let request = StudyAgentRequest(id: try XCTUnwrap(writeReply.origin?.requestID), purpose: .conversation,
+            let request = StudyAgentRequest(id: try XCTUnwrap(writeReply.origin?.requestID),
                 question: "追加正文并关联讲义", materialTitle: "", materialText: "", noteTitle: "", noteText: "", contextRevision: "request")
             let target = WorkspaceStore.AgentConversationTarget(sessionID: chatID, workingDirectory: root, courseID: courseID)
             let pending = await store.performNativeAgentAction(write, userRequested: false,

@@ -118,7 +118,7 @@ for notice in PRIVACY.md THIRD_PARTY_NOTICES.md ASSET_ATTRIBUTIONS.md; do
   cp "$ROOT_DIR/$notice" "$CONTENTS/Resources/Legal/$notice"
 done
 # The Catalyst target compiles the layered icon and supplies its Info.plist keys.
-for resource in Editor/diagram.html Editor/mermaid-runtime.js landscape.png Editor/index.html genui.html AgentResources/system.md; do
+for resource in Editor/diagram.html Editor/mermaid-runtime.js Editor/index.html genui.html AgentResources/system.md; do
   [[ -s "$CONTENTS/Resources/$resource" ]] || { echo "package failed: missing $resource" >&2; exit 10; }
 done
 DSYM_PATH="$DIST_DIR/WeiBei-$APP_VERSION-$TARGET_ARCH-build-$BUILD_NUMBER-$GIT_COMMIT.dSYM"

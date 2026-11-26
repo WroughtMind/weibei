@@ -141,7 +141,6 @@ public actor NativeStudyAgentRuntime: StudyAgentRuntime {
         return StudyAgentReply(
             text: result.text,
             contentBlocks: result.contentBlocks,
-            backend: .native,
             sources: result.sources,
             appliedMemoryUpdate: result.appliedMemoryUpdate,
             appliedProfileUpdate: result.appliedProfileUpdate,

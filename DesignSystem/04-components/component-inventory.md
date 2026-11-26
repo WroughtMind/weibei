@@ -9,7 +9,7 @@
 | 顶栏 | `UnifiedTopBarView` | 当前课程、模式和全局动作；不堆满工具按钮 |
 | 栏标题 | `WeiBeiPaneHeader` | 短、稳定、可拖动；品牌字体只用于有限 Latin 标记 |
 | 阅读 | `ReaderView` | 原文优先、选区动作、引用定位和滚动连续性 |
-| 对话与笔记 | `NotesAgentView` | 回答、证据、写入确认和编辑状态 |
+| 对话与笔记 | `NotePaneView` 与 `AgentPaneView` | 回答、证据、写入确认和编辑状态 |
 | 课程目录 | `SidebarView` | 课程层级、材料状态和当前位置 |
 | 命令面板 | `CommandPaletteView` | 键盘优先、结果分组、明确执行范围 |
 | 空工作区 | `EmptyWorkspaceLauncherView` | 一句说明、一个主要动作、少量入口 |
@@ -21,7 +21,6 @@
 - `WeiBeiTextActionButtonStyle`
 - `weibeiInputSurface`
 - `weibeiFloatingPanel`
-- `weibeiAnnotationPanel`
 - `WeiBeiGlassHeaderBackground`
 - hover modifier 与 `WeiBeiTransition`
 

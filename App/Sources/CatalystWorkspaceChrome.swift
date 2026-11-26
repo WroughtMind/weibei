@@ -18,15 +18,18 @@ import WeiBeiCore
 /// Native toolbar items own their hit regions; drawing controls under a hidden
 /// titlebar leaves AppKit's window double-click handling over those controls.
 struct CatalystTopBar: UIViewControllerRepresentable {
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
     let leading: AnyView
     let center: AnyView
     let trailing: AnyView
     let overflowMenus: [UIMenu]
     let isVisible: Bool
+    let isFullScreen: Bool
 
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.update([leading, center, trailing], menus: overflowMenus, isVisible: isVisible)
+        controller.update([leading, center, trailing], menus: overflowMenus,
+                          isVisible: isVisible, isFullScreen: isFullScreen, reduceMotion: reduceMotion)
     }
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
         controller.tearDown()
@@ -40,6 +43,8 @@ struct CatalystTopBar: UIViewControllerRepresentable {
         private var menus = (0..<3).map { _ in UIMenu(children: []) }
         private weak var scene: UIWindowScene?
         private var showsToolbar = true
+        private var isFullScreen = false
+        private var reduceMotion = false
 
         override func loadView() {
             let probe = Probe()
@@ -51,7 +56,7 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             toolbar.centeredItemIdentifiers = [identifiers[1]]
         }
 
-        func update(_ contents: [AnyView], menus: [UIMenu], isVisible: Bool) {
+        func update(_ contents: [AnyView], menus: [UIMenu], isVisible: Bool, isFullScreen: Bool, reduceMotion: Bool) {
             loadViewIfNeeded()
             self.menus = menus
             self.contents = contents
@@ -62,6 +67,8 @@ struct CatalystTopBar: UIViewControllerRepresentable {
                 item.itemMenuFormRepresentation = menus[index]
             }
             showsToolbar = isVisible
+            self.isFullScreen = isFullScreen
+            self.reduceMotion = reduceMotion
             attach()
         }
 
@@ -69,11 +76,20 @@ struct CatalystTopBar: UIViewControllerRepresentable {
             guard let next = view.window?.windowScene else { return }
             if scene !== next { detach(); scene = next }
             next.titlebar?.toolbarStyle = .unifiedCompact
-            next.titlebar?.autoHidesToolbarInFullScreen = false
-            // Keep a stable native window identity even when immersive mode
-            // hides the toolbar. Visibility remains owned by AppKit.
+            next.titlebar?.autoHidesToolbarInFullScreen = true
+            // Keep the toolbar's identity for file drops and popovers. In full
+            // screen AppKit presents the window buttons at the screen edge;
+            // the workspace's controls have their own in-content hover area.
             if next.titlebar?.toolbar !== toolbar { next.titlebar?.toolbar = toolbar }
-            CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(showsToolbar, toolbar: toolbar)
+            if isFullScreen {
+                for index in toolbar.items.indices.reversed() { toolbar.removeItem(at: index) }
+            } else if toolbar.items.isEmpty {
+                for (index, identifier) in toolbarDefaultItemIdentifiers(toolbar).enumerated() {
+                    toolbar.insertItem(withItemIdentifier: identifier, at: index)
+                }
+            }
+            CatalystDesktopWindow.shared.setWorkspaceToolbarVisible(showsToolbar, toolbar: toolbar,
+                                                                   reduceMotion: reduceMotion)
         }
 
         func detach() {
@@ -213,6 +229,43 @@ struct CatalystTopBar: UIViewControllerRepresentable {
     }
 }
 
+struct CatalystFullScreenToolbar: View {
+    let leading: AnyView
+    let center: AnyView
+    let trailing: AnyView
+    let height: CGFloat
+
+    @Environment(\.weibeiReduceMotion) private var reduceMotion
+    @State private var hovering = false
+    @State private var visible = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            leading
+            Spacer(minLength: 0)
+            trailing
+        }
+        .padding(.horizontal, CGFloat(TopBarLeadingInset.value(isFullScreen: true)))
+        .overlay { center }
+        .frame(height: height)
+        .opacity(visible ? 1 : 0)
+        .weiBeiFadeWhenReducingMotion(visible)
+        .allowsHitTesting(visible)
+        .background {
+            HoverPassThroughRegion(topEdgeInset: 4, identifier: "fullscreen-toolbar-hover") { hovering = $0 }
+        }
+        .task(id: hovering) {
+            if !hovering { try? await Task.sleep(for: .milliseconds(180)) }
+            guard !Task.isCancelled else { return }
+            let duration = hovering ? WeiBeiMotionTokens.durationSmExit : WeiBeiMotionTokens.durationControl
+            let curve = hovering ? WeiBeiMotionTokens.easeOut : WeiBeiMotionTokens.easeIn
+            withAnimation(reduceMotion ? nil : curve.animation(duration)) {
+                visible = hovering
+            }
+        }
+    }
+}
+
 /// Keeps each original SwiftUI pane and its editor/controller alive when moving between layouts.
 final class CatalystHostingView: UIView {
     let controller: UIHostingController<AnyView>
@@ -293,6 +346,7 @@ final class PersistentPaneHostRegistry: ObservableObject {
 
 struct PersistentPaneHost: UIViewRepresentable {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.weiBeiTextScale) private var textScale
     let role: WorkspacePaneRole
     let registry: PersistentPaneHostRegistry
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -307,6 +361,7 @@ struct PersistentPaneHost: UIViewRepresentable {
     }
     func updateUIView(_ view: Container, context: Context) {
         view.isHidden = store.courseWorkspacePresented
+        view.fullScreenToolbarHeight = WeiBeiMetric.topBarHeight * textScale
         if view.window != nil { context.coordinator.attach(role, registry: registry, store: store, view: view) }
     }
     static func dismantleUIView(_ view: Container, coordinator: Coordinator) {
@@ -318,6 +373,9 @@ struct PersistentPaneHost: UIViewRepresentable {
     }
     final class Container: UIView {
         var onAttachment: (() -> Void)?
+        var fullScreenToolbarHeight: CGFloat = 0 {
+            didSet { if fullScreenToolbarHeight != oldValue { setNeedsLayout() } }
+        }
         private let toolbarFade = CAGradientLayer()
         override func didMoveToWindow() { super.didMoveToWindow(); onAttachment?() }
         override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
@@ -329,7 +387,10 @@ struct PersistentPaneHost: UIViewRepresentable {
             }
             // Preserve the reading surface's gradient independently of toolbar
             // control visibility. Neither hover state changes content geometry.
-            let top = max(0, window.safeAreaInsets.top - convert(bounds, to: window).minY)
+            let nativeInset = window.safeAreaInsets.top
+            let toolbarInset = window.windowScene?.isFullScreen == true
+                ? max(nativeInset, fullScreenToolbarHeight) : nativeInset
+            let top = max(0, toolbarInset - convert(bounds, to: window).minY)
             guard top > 0 else { layer.mask = nil; return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -653,14 +714,21 @@ struct CourseDrawerHost: UIViewRepresentable {
 }
 
 struct HoverPassThroughRegion: UIViewRepresentable {
+    var topEdgeInset: CGFloat = 0
+    var identifier: String? = nil
     var onHoverChange: (Bool) -> Void
     func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) { view.changed = onHoverChange }
+    func updateUIView(_ view: Probe, context: Context) {
+        view.topEdgeInset = topEdgeInset
+        view.accessibilityIdentifier = identifier
+        view.changed = onHoverChange
+    }
     static func dismantleUIView(_ view: Probe, coordinator: ()) { view.detach() }
     final class Probe: UIView, UIGestureRecognizerDelegate {
         var changed: ((Bool) -> Void)?
         private weak var observedView: UIView?
-        private var inside = false
+        var topEdgeInset: CGFloat = 0
+        private(set) var inside = false
         private lazy var hover = UIHoverGestureRecognizer(target: self, action: #selector(moved(_:)))
         override func point(inside point: CGPoint, with event: UIEvent?) -> Bool { false }
         override func didMoveToWindow() {
@@ -682,7 +750,8 @@ struct HoverPassThroughRegion: UIViewRepresentable {
         }
         @objc private func moved(_ recognizer: UIHoverGestureRecognizer) {
             let next = recognizer.state != .ended && recognizer.state != .cancelled
-                && window != nil && bounds.contains(recognizer.location(in: self))
+                && window != nil && bounds.inset(by: UIEdgeInsets(top: topEdgeInset, left: 0, bottom: 0, right: 0))
+                    .contains(recognizer.location(in: self))
             guard next != inside else { return }
             inside = next; changed?(next)
         }

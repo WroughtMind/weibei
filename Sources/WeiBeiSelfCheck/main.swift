@@ -934,15 +934,6 @@ expect(WikiLink.targetTitle(from: "货币理论#^rate-block") == "货币理论",
 expect(WikiLink.enclosingTitle(in: "参考 [[货币理论|Money]] 继续写", cursor: 6) == "货币理论", "wikilink title at cursor")
 expect(WikiLink.enclosingTitle(in: "参考 [[货币理论#利率]] 继续写", cursor: 8) == "货币理论", "wikilink heading title at cursor")
 expect(WikiLink.enclosingTitle(in: "没有双链", cursor: 2) == nil, "wikilink title ignores plain text")
-expect(WorkspaceLayout.documentAgentNotes.hasCollapsibleRightPane, "three-pane layout can collapse right pane")
-expect(!WorkspaceLayout.immersiveReading.hasCollapsibleRightPane, "immersive reading has no right pane to collapse")
-expect(!WorkspaceLayout.immersiveWriting.hasCollapsibleRightPane, "immersive writing keeps one uninterrupted note canvas")
-expect(WorkspaceLayout.documentAgentNotes.isDocumentThreePane
-    && WorkspaceLayout.documentNotesAgent.isDocumentThreePane, "only full document layouts participate in three-pane reordering")
-expect(WorkspaceLayout.documentAgentNotes.allowsRailOnlyPanes
-    && WorkspaceLayout.documentNotesAgent.allowsRailOnlyPanes
-    && !WorkspaceLayout.immersiveConversation.allowsRailOnlyPanes
-    && !WorkspaceLayout.immersiveWriting.allowsRailOnlyPanes, "only normal multi-pane layouts can collapse content panes into rail-only mode")
 expect(WeiBeiMotionPreference.system.resolvesReduceMotion(systemReduceMotion: false) == false
     && WeiBeiMotionPreference.system.resolvesReduceMotion(systemReduceMotion: true) == true
     && WeiBeiMotionPreference.reduce.resolvesReduceMotion(systemReduceMotion: false) == true
@@ -950,28 +941,12 @@ expect(WeiBeiMotionPreference.system.resolvesReduceMotion(systemReduceMotion: fa
     && WeiBeiMotionPreference.full.resolvesReduceMotion(systemReduceMotion: false) == false
     && WeiBeiMotionPreference.full.resolvesReduceMotion(systemReduceMotion: true) == false,
     "motion preference resolution covers all six preference × system combinations")
-// Retired 阅读/笔记对半 layout: string survives only as a persisted migration marker.
-expect(WorkspaceLayout.resolve(persistedValue: WorkspaceLayout.retiredSplitPersistedValue) == nil
-    && WorkspaceLayout.resolve(persistedValue: "documentAgentNotes") == .documentAgentNotes
-    && WorkspaceLayout.resolve(persistedValue: "documentNotesAgent") == .documentNotesAgent
-    && WorkspaceLayout.resolve(persistedValue: "immersiveWriting") == .immersiveWriting
-    && WorkspaceLayout.resolve(persistedValue: "futureUnknownLayout") == nil,
-    "persisted layout strings resolve, and retired or unknown strings drop only the layout field")
 do {
-    let legacySplitSnapshotJSON = #"{"importedItems":[],"notesByItemID":{},"workspaceLayout":"documentNotesSplit","threePaneOrder":["reader","notes","agent"],"showAgent":true,"courses":[]}"#
-    let legacySplitSnapshot = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(legacySplitSnapshotJSON.utf8))
-    expect(legacySplitSnapshot.workspaceLayout == "documentNotesSplit"
-        && legacySplitSnapshot.threePaneOrder == [.reader, .notes, .agent],
-        "workspace snapshot with retired layout string still decodes")
-    let unknownLayoutSnapshotJSON = #"{"importedItems":[],"notesByItemID":{},"workspaceLayout":"futureUnknownLayout","courses":[]}"#
-    let unknownLayoutSnapshot = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(unknownLayoutSnapshotJSON.utf8))
-    expect(unknownLayoutSnapshot.workspaceLayout == "futureUnknownLayout",
-        "workspace snapshot with unknown layout string still decodes")
-} catch {
-    expect(false, "workspace snapshot with retired or unknown layout string still decodes")
+    let snapshotJSON = #"{"importedItems":[],"notesByItemID":{},"workspaceLayout":"documentNotesSplit","threePaneOrder":["reader","notes","agent"],"showAgent":true,"courses":[]}"#
+    let snapshot = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(snapshotJSON.utf8))
+    expect(snapshot.threePaneOrder == [.reader, .notes, .agent] && snapshot.showAgent == true,
+        "workspace restores the current pane order and visibility from an existing snapshot")
 }
-expect(WorkspaceLayout.documentAgentNotes.defaultThreePaneOrder == [.reader, .agent, .notes]
-    && WorkspaceLayout.documentNotesAgent.defaultThreePaneOrder == [.reader, .notes, .agent], "legacy three-pane layout presets map to pane role order")
 expect(WorkspacePaneRole.normalized([.notes, .reader, .notes]) == [.notes, .reader, .agent], "pane role order normalization preserves user pane order and restores missing panes")
 expect(WorkspacePaneRole.agent.focus == .agent
     && WorkspacePaneRole.reader.shortLabel(language: .chinese) == "文"
@@ -989,11 +964,6 @@ expect(ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 2, co
     && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 0, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == 0
     && ThreePaneReorderTargeting.visibleHighlightIndex(completeOrderIndex: 3, completeOrder: [.reader, .agent, .notes], visibleOrder: [.reader, .notes]) == nil,
     "hidden-pane drag highlight maps complete-order indexes through the pane role into the visible array")
-expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-对话-笔记"
-    && WorkspaceLayout.documentAgentNotes.label(language: .english) == "Reader-Chat-Notes"
-    && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
-    && WorkspaceLayout.documentNotesAgent.label(language: .english) == "Reader-Notes-Chat", "layout labels use localized task language instead of internal pane names")
-expect(WorkspaceLayout.immersiveConversation.systemImage == "bubble.left.and.text.bubble.right" && WorkspaceLayout.immersiveWriting.systemImage == "square.and.pencil", "immersive layouts expose semantic menu icons")
 expect(
     NoteTabDisplayTitle.resolve(customTitle: nil, noteTitle: "旧文件名", body: "# 货币银行学\n\n第二章 利率") == "货币银行学",
     "body heading outranks the file name so editing the heading renames the tab live"
@@ -1253,55 +1223,9 @@ expect(!SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasS
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: true, pinned: false), "selection agent appears when anchored")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false, keepOpen: true), "keepOpen floats stay visible without a live drag anchor")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: false, hasAnchor: false, pinned: true), "pinned floats stay visible without selection")
-expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 190
-    && SelectionFloatingAgentPlacement.expandedHalfHeight == 230
-    && SelectionFloatingAgentPlacement.compactHalfWidth == 82, "selection agent placement constants bound the narrow expanded surface and compact prompt")
 expect(SelectionFloatingAgentPlacement.expandedComposerMaxHeight > 48
     && SelectionFloatingAgentPlacement.expandedComposerMaxHeight < SelectionFloatingAgentPlacement.expandedHalfHeight,
     "selection agent composer grows for multiple lines without taking over the floating panel")
-expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 360) == 360,
-    "selection agent follows the real answer height well beyond the old shallow stop")
-expect(SelectionFloatingAgentPlacement.automaticContentHeight(measuredContentHeight: 900)
-    == SelectionFloatingAgentPlacement.maximumAutomaticContentHeight,
-    "selection agent eventually stops automatic growth and scrolls inside a bounded frame")
-let resizedFloatingAgent = SelectionFloatingAgentPlacement.resizedFrame(
-    current: FloatingAgentSize(width: 380, height: 420),
-    translation: FloatingAgentSize(width: 90, height: 70),
-    canvas: FloatingAgentSize(width: 1_200, height: 800),
-    edge: .bottomTrailing
-)
-expect(resizedFloatingAgent == FloatingAgentResizeResult(
-    size: FloatingAgentSize(width: 470, height: 490),
-    offset: FloatingAgentCoordinate(x: 45, y: 35)
-), "selection agent resize follows the dragged corner while keeping the opposite corner still")
-let leadingEdgeResize = SelectionFloatingAgentPlacement.resizedFrame(
-    current: FloatingAgentSize(width: 380, height: 420),
-    translation: FloatingAgentSize(width: -90, height: 0),
-    canvas: FloatingAgentSize(width: 1_200, height: 800),
-    edge: .leading
-)
-expect(leadingEdgeResize == FloatingAgentResizeResult(
-    size: FloatingAgentSize(width: 470, height: 420),
-    offset: FloatingAgentCoordinate(x: -45, y: 0)
-), "dragging the leading border resizes outward instead of requiring a corner handle")
-let topEdgeResize = SelectionFloatingAgentPlacement.resizedFrame(
-    current: FloatingAgentSize(width: 380, height: 240),
-    translation: FloatingAgentSize(width: 0, height: -80),
-    canvas: FloatingAgentSize(width: 1_200, height: 800),
-    edge: .top
-)
-expect(topEdgeResize == FloatingAgentResizeResult(
-    size: FloatingAgentSize(width: 380, height: 320),
-    offset: FloatingAgentCoordinate(x: 0, y: -40)
-), "dragging the top border keeps the bottom edge stable without feedback jitter")
-let clampedFloatingAgent = SelectionFloatingAgentPlacement.resizedFrame(
-    current: FloatingAgentSize(width: 380, height: 160),
-    translation: FloatingAgentSize(width: -1_000, height: 1_000),
-    canvas: FloatingAgentSize(width: 500, height: 400),
-    edge: .bottomTrailing
-)
-expect(clampedFloatingAgent.size == FloatingAgentSize(width: 320, height: 240),
-    "selection agent resize stays usable inside the available canvas")
 let floatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
@@ -1315,22 +1239,6 @@ expect(floatingPoint.x - SelectionFloatingAgentPlacement.expandedHalfWidth > 320
     "expanded selection agent opens beside the passage without covering it")
 expect(topInsetFloatingPoint.x == floatingPoint.x && topInsetFloatingPoint.y == floatingPoint.y - 42,
     "selection agent compensates top bar coordinate space")
-let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
-    anchor: FloatingAgentCoordinate(x: 12, y: 200),
-    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
-    surfaceHalfWidth: SelectionFloatingAgentPlacement.compactHalfWidth,
-    prefersAnchorCenter: true
-)
-let compactCenterFloatingPoint = SelectionFloatingAgentPlacement.position(
-    anchor: FloatingAgentCoordinate(x: 320, y: 200),
-    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
-    surfaceHalfWidth: SelectionFloatingAgentPlacement.compactHalfWidth,
-    prefersAnchorCenter: true
-)
-expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y - SelectionFloatingAgentPlacement.compactHalfHeight > 200,
-    "compact selection prompt remains outside the selected text")
-expect(compactEdgeFloatingPoint.x >= SelectionFloatingAgentPlacement.compactHalfWidth && compactEdgeFloatingPoint.y == compactCenterFloatingPoint.y,
-    "compact selection prompt remains completely visible at the window edge")
 let reverseSelectionPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 400),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
@@ -1340,6 +1248,15 @@ let reverseSelectionPoint = SelectionFloatingAgentPlacement.position(
     prefersAnchorCenter: true
 )
 expect(reverseSelectionPoint.y + 22 < 400, "backward selection opens above its final line")
+let bottomSelectionPoint = SelectionFloatingAgentPlacement.position(
+    anchor: FloatingAgentCoordinate(x: 320, y: 782),
+    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
+    surfaceHalfWidth: 63,
+    measuredHalfHeight: 14,
+    prefersAnchorCenter: true,
+    selectionHeight: 72
+)
+expect(bottomSelectionPoint.y + 14 < 710, "the capsule flips above all selected lines at the bottom edge")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
@@ -1553,7 +1470,6 @@ let persistentReply = AgentMessage(
     role: .assistant,
     text: "已经生成的安全正文",
     source: "利率",
-    backend: .native,
     completionState: .interrupted,
     sources: [replySource],
     actions: [replyAction],
@@ -1644,12 +1560,11 @@ let malformedRichReply = try! JSONDecoder().decode(
 )
 expect(malformedRichReply.text == "正文必须保留"
     && malformedRichReply.source == nil
-    && malformedRichReply.backend == nil
     && malformedRichReply.completionState == .completed
     && malformedRichReply.sources.isEmpty
     && malformedRichReply.actions.isEmpty
     && malformedRichReply.toolTrace.contains("reply-source:decode-failed")
-    && malformedRichReply.toolTrace.contains("reply-backend:decode-failed")
+    && !malformedRichReply.toolTrace.contains("reply-backend:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-state:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-sources:decode-failed")
     && malformedRichReply.toolTrace.contains("reply-actions:decode-failed"), "broken reply attachments are dropped and diagnosed without swallowing the reply body")
@@ -1728,59 +1643,7 @@ expect(relationIndex.sourceIDs(for: relationNoteB) == [relationSourceA]
     && relationIndex.sourceCount(for: relationNoteID) == 1
     && relationIndex.noteCount(for: relationSourceB) == 1, "relationship index reuses normalized note-to-source and source-to-note lookups")
 
-let courseMaterials = [
-    StudyItem(id: "material:a", title: "第一讲", subtitle: "第一讲.pdf", kind: .pdf, urlPath: "/tmp/course/a.pdf", isSample: false),
-    StudyItem(id: "material:b", title: "第二讲", subtitle: "第二讲.html", kind: .html, urlPath: "/tmp/course/b.html", isSample: false),
-    StudyItem(id: "material:c", title: "补充材料", subtitle: "补充材料.txt", kind: .text, urlPath: "/tmp/course/c.txt", isSample: false)
-]
-let courseNotes = [
-    StudyItem(id: "note:a", title: "第一讲笔记", subtitle: "第一讲笔记.md", kind: .markdown, urlPath: "/tmp/course/note-a.md", isSample: false, isNotebookNote: true),
-    StudyItem(id: "note:b", title: "共同主题", subtitle: "共同主题.md", kind: .markdown, urlPath: "/tmp/course/note-b.md", isSample: false, isNotebookNote: true),
-    StudyItem(id: "note:c", title: "待整理", subtitle: "待整理.md", kind: .markdown, urlPath: "/tmp/course/note-c.md", isSample: false, isNotebookNote: true)
-]
-let builtInSample = StudyItem(id: "sample:ignored", title: "内置样例", subtitle: "样例", kind: .html, urlPath: nil, isSample: true)
-let courseLinks = [
-    NoteSourceLink(noteItemID: "note:a", sourceItemID: "material:a", createdAt: Date(timeIntervalSince1970: 10)),
-    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:a", createdAt: Date(timeIntervalSince1970: 11)),
-    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:b", createdAt: Date(timeIntervalSince1970: 12)),
-    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:b", createdAt: Date(timeIntervalSince1970: 13)),
-    NoteSourceLink(noteItemID: "note:missing", sourceItemID: "material:c", createdAt: Date(timeIntervalSince1970: 14)),
-    NoteSourceLink(noteItemID: "note:a", sourceItemID: "sample:ignored", createdAt: Date(timeIntervalSince1970: 15))
-]
 let firstCourseSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
-let secondCourseSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000002")!
-let courseSummary = CourseWorkspaceSummary(
-    importedItems: courseMaterials + courseNotes + [builtInSample],
-    noteSourceLinks: courseLinks,
-    studyLocationsByItemID: [
-        "material:a": StudyLocation(itemID: "material:a", itemTitle: "第一讲"),
-        "material:c": StudyLocation(itemID: "material:c", itemTitle: "补充材料"),
-        "material:missing": StudyLocation(itemID: "material:missing", itemTitle: "已移除资料")
-    ],
-    studySessions: [
-        StudySession(
-            id: firstCourseSessionID,
-            title: "第一次学习",
-            messages: [AgentMessage(role: .user, text: "解释第一讲", source: "第一讲")]
-        ),
-        StudySession(id: secondCourseSessionID, title: "第二次学习")
-    ],
-    learningMemoryEntries: [
-        LearningMemoryEntry(kind: .confusion, text: "困惑一", evidence: "用户提出", origin: .userStatement),
-        LearningMemoryEntry(kind: .confusion, text: "困惑二", evidence: "用户提出", origin: .userStatement),
-        LearningMemoryEntry(kind: .confusion, text: "已解决困惑", evidence: "用户提出", origin: .userStatement, status: .resolved),
-        LearningMemoryEntry(kind: .goal, text: "课程目标", evidence: "用户提出", origin: .userStatement)
-    ]
-)
-expect(courseSummary.materialCount == 3
-    && courseSummary.noteCount == 3
-    && courseSummary.explicitLinkCount == 3
-    && courseSummary.readingPositionCount == 2
-    && courseSummary.unlinkedMaterialCount == 1
-    && courseSummary.unlinkedNoteCount == 1
-    && courseSummary.studySessionCount == 1
-    && courseSummary.unresolvedConfusionCount == 2, "course workspace summary reports only durable facts from the imported course")
-
 let courseHomeHighlightCourseID = UUID(uuidString: "10000000-0000-0000-0000-000000000010")!
 let courseHomeHighlightSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000011")!
 let courseHomeHighlightSession = StudySession(
@@ -1788,7 +1651,7 @@ let courseHomeHighlightSession = StudySession(
     title: "课程学习",
     messages: [AgentMessage(role: .user, text: "继续学习", source: "课程")],
     courseID: courseHomeHighlightCourseID,
-    flow: StudyFlowState(suggestedNext: ["复习第二章"]),
+    flow: StudyFlowState(),
     updatedAt: Date(timeIntervalSince1970: 200)
 )
 let courseHomeHighlights = CourseHomeLearningHighlights(
@@ -1859,7 +1722,7 @@ let emptyCourseHomeHighlights = CourseHomeLearningHighlights(
             title: "另一门课",
             messages: [AgentMessage(role: .user, text: "不能串课", source: "另一门课")],
             courseID: UUID(uuidString: "10000000-0000-0000-0000-000000000012"),
-            flow: StudyFlowState(suggestedNext: ["不应显示"])
+            flow: StudyFlowState()
         ),
     ]
 )
@@ -1918,14 +1781,12 @@ for invalidSession in invalidCourseHomeSessions {
 let courseA = Course(
     id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
     title: "货币金融学",
-    colorIndex: 0,
-    sourceRootPath: "/Courses/Money"
+    colorIndex: 0
 )
 let courseB = Course(
     id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
     title: "经济思想史",
-    colorIndex: 1,
-    sourceRootPath: "/Courses/History"
+    colorIndex: 1
 )
 var courseMemberships = CourseItemMemberships()
 courseMemberships.assign(itemIDs: Set(["material-a", "note-a"]), to: courseA.id)
@@ -1942,7 +1803,6 @@ let persisted = PersistedWorkspace(
     courseItemMemberships: courseMemberships.values,
     activeCourseID: courseB.id,
     noteSourceLinks: [oldestLink],
-    noteSourceLinksMigrationVersion: 1,
     learningMemoryStates: [
         ScopedLearningMemoryState(
             scope: .course(courseA.id),
@@ -1972,16 +1832,14 @@ let persisted = PersistedWorkspace(
     ],
     learningMemoryScopeMigrationVersion: 1,
     threePaneOrder: [.agent, .reader, .notes],
-    showLibrary: false,
     showReader: false,
     showAgent: true,
     showNotes: false,
-    showRightPane: true,
     showDailyInspiration: false,
     adaptImportedDocumentColors: false
 )
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))
-expect(restored.showLibrary == false && restored.showReader == false && restored.showAgent == true && restored.showNotes == false && restored.showRightPane == true, "pane visibility state persists")
+expect(restored.showReader == false && restored.showAgent == true && restored.showNotes == false, "pane visibility state persists")
 expect(restored.courses == [courseA, courseB]
     && restored.courseItemMemberships == courseMemberships.values
     && restored.activeCourseID == courseB.id, "courses, many-to-many membership, and the active course persist together")
@@ -1998,7 +1856,7 @@ expect(restored.adaptImportedDocumentColors == false
     && legacyWorkspace.adaptImportedDocumentColors == nil,
     "imported-document color adaptation persists while old workspaces keep the legacy default")
 expect(restored.threePaneOrder == [.agent, .reader, .notes], "custom three-pane order persists")
-expect(restored.noteSourceLinks == [oldestLink] && restored.noteSourceLinksMigrationVersion == 1, "note-source relations and one-time migration state persist together")
+expect(restored.noteSourceLinks == [oldestLink], "explicit note-source relations persist")
 expect(restored.learningMemoryStates?.first?.scope == .course(courseA.id)
     && restored.learningMemoryStates?.first?.revision == 1
     && restored.learningMemoryStates?.first?.entries.first?.revisions?.first?.actor == .user
@@ -2041,18 +1899,6 @@ expect(rawAttachment.src == ".weibei-assets/dragged.png", "raw image data save k
 expect(MarkdownAttachmentStore.isSupportedImageExtension("HEIC"), "image extension check is case insensitive")
 expect(MarkdownAttachmentStore.mimeType(forFileExtension: "jpeg") == "image/jpeg", "mime from extension")
 expect(MarkdownAttachmentStore.isSupportedImageExtension("TIF") && MarkdownAttachmentStore.mimeType(forFileExtension: "tif") == "image/tiff" && MarkdownAttachmentStore.fileExtension(originalName: "scan.tif", mime: "image/tiff") == "tif", "TIFF images keep their .tif extension and MIME type")
-let blockInsert = MarkdownBlockInsertion.insert(
-    "![pasted](Attachments/pasted.png)",
-    into: "来源：课程 HTML",
-    replacing: NSRange(location: ("来源：课程 HTML" as NSString).length, length: 0)
-)
-expect(blockInsert.text == "来源：课程 HTML\n\n![pasted](Attachments/pasted.png)", "block markdown insertion separates from inline text")
-let middleBlockInsert = MarkdownBlockInsertion.insert(
-    "![pasted](Attachments/pasted.png)",
-    into: "前文后文",
-    replacing: NSRange(location: ("前文" as NSString).length, length: 0)
-)
-expect(middleBlockInsert.text == "前文\n\n![pasted](Attachments/pasted.png)\n\n后文", "block markdown insertion separates both sides")
 expect(
     CourseDocumentSearchIndex.text("久期衡量利率风险，凸性修正非线性", matchesAnyTermIn: "久期 凸性"),
     "multi-term course search matches freshly written note text before indexing"

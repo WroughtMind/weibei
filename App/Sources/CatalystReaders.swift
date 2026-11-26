@@ -148,6 +148,7 @@ struct SelectablePlainTextReader: UIViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
     var hidesHostedDocument = false
     var underlineSnippets: [String]
+    var readingPosition: ReaderPlainTextPosition?
     var onDocumentTap: () -> Void = {}
     var onSelectionChange: (String, SelectionPopoverAnchor?) -> Void
     private let customAccent = WeiBeiThemeRuntime.customAccent
@@ -164,6 +165,23 @@ struct SelectablePlainTextReader: UIViewRepresentable {
         configurePaneTopScrollEdges(in: view)
         view.delegate = context.coordinator
         updateUIView(view, context: context)
+        readingPosition?.captureNativeOffset = { [weak view] in
+            guard let view else { return nil }
+            let point = CGPoint(x: view.textContainerInset.left,
+                                y: view.contentOffset.y + view.textContainerInset.top)
+            guard let position = view.closestPosition(to: point) else { return nil }
+            return view.offset(from: view.beginningOfDocument, to: position)
+        }
+        if let offset = readingPosition?.offset, offset > 0 {
+            DispatchQueue.main.async { [weak view] in
+                guard let view, let position = view.position(from: view.beginningOfDocument, offset: offset) else { return }
+                view.layoutIfNeeded()
+                let inset = view.adjustedContentInset
+                let y = view.caretRect(for: position).minY - view.textContainerInset.top
+                let bottom = view.contentSize.height - view.bounds.height + inset.bottom
+                view.setContentOffset(CGPoint(x: 0, y: max(-inset.top, min(y, bottom))), animated: false)
+            }
+        }
         return view
     }
     func updateUIView(_ view: UITextView, context: Context) {
@@ -271,7 +289,9 @@ struct SelectablePlainTextReader: UIViewRepresentable {
                 parent.onSelectionChange("", nil); return
             }
             let rect = textView.selectionRects(for: range).map(\.rect).reduce(CGRect.null) { $0.union($1) }
-            let anchor = rect.isNull ? nil : SelectionAnchorContentPoint.fromLocalPoint(CGPoint(x: rect.midX, y: rect.maxY), in: textView)
+            let anchor = rect.isNull ? nil : SelectionAnchorContentPoint.fromLocalPoint(
+                CGPoint(x: rect.midX, y: rect.maxY), in: textView, selectionHeight: rect.height
+            )
             parent.onSelectionChange(text, anchor)
         }
     }

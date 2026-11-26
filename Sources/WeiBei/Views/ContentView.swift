@@ -24,7 +24,7 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let fitsSidebar = !isImmersiveLayout && geometry.size.width >= WeiBeiMetric.courseDrawerWidth + WeiBeiMetric.minimumWorkspaceWidth
+            let fitsSidebar = geometry.size.width >= WeiBeiMetric.courseDrawerWidth + WeiBeiMetric.minimumWorkspaceWidth
             ZStack {
                 WorkspaceChromeBackdrop(isFullScreen: windowIsFullScreen)
 
@@ -38,7 +38,6 @@ struct ContentView: View {
 
                 VStack(spacing: 0) {
                     UnifiedTopBarView(
-                        isImmersiveLayout: isImmersiveLayout,
                         isFullScreen: windowIsFullScreen,
                         contentTopInset: geometry.safeAreaInsets.top,
                         searchFocused: $topSearchFocused
@@ -62,10 +61,6 @@ struct ContentView: View {
                                     ? Color.clear
                                     : Color(weiBeiNativeColor: WeiBeiNativePalette.paper(for: store.appearanceMode))
                             )
-                            // Only cross-fade immersive ↔ document families. Pane show/hide inside
-                            // the document family is owned by AppKit StableDocumentWorkspace animation
-                            // — a second SwiftUI layout animation here made toggles feel split/janky.
-                            .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
                             .background {
                                 GeometryReader { content in
                                     Color.clear.preference(
@@ -88,7 +83,8 @@ struct ContentView: View {
                                     Color.clear.allowsHitTesting(false)
                                     GlobalFloatingSelectionLayer(
                                         expanded: $floatingAgentExpanded,
-                                        canvasSize: documentCanvas == .zero ? geometry.size : documentCanvas
+                                        canvasSize: documentCanvas == .zero ? geometry.size : documentCanvas,
+                                        fitsSidebar: fitsSidebar
                                     )
                                 }
                             }
@@ -161,9 +157,6 @@ struct ContentView: View {
                         .zIndex(120)
                         .transition(WeiBeiTransition.floating)
                 }
-
-                // Agent 创建文稿的写盘确认浮层：覆盖课程空间等全部层级。
-                AgentDocumentConfirmationOverlay()
             }
             .contentShape(Rectangle())
             .allowsHitTesting(!store.settingsPresented)
@@ -218,6 +211,10 @@ struct ContentView: View {
                 )
             }
         }
+        .sheet(item: $store.notePDFExportRequest) { request in
+            NotePDFExportView(request: request, theme: store.appearanceMode, textScale: textScale)
+                .environmentObject(store)
+        }
         .sheet(isPresented: $store.excerptBookPresented) {
             ExcerptBookView(courseID: store.excerptBookCourseID)
                 .environmentObject(store)
@@ -249,10 +246,6 @@ struct ContentView: View {
         // showLibrary animation is scoped to the drawer ZStack only (above).
         .animation(WeiBeiMotion.visibility(store.courseWorkspacePresented, size: .large), value: store.courseWorkspacePresented)
         .weiBeiFadeWhenReducingMotion(store.courseWorkspacePresented)
-    }
-
-    private var isImmersiveLayout: Bool {
-        [.immersiveReading, .immersiveConversation, .immersiveWriting].contains(store.layout)
     }
 
 #if targetEnvironment(macCatalyst)
@@ -425,10 +418,13 @@ private struct DocumentCanvasSizeKey: PreferenceKey {
 private struct GlobalFloatingSelectionLayer: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var interaction: WorkspaceInteractionState
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    @EnvironmentObject private var paneState: WorkspacePaneState
     @Environment(\.weiBeiTextScale) private var textScale
     @Environment(\.weibeiReduceMotion) private var reduceMotion
     @Binding var expanded: Bool
     let canvasSize: CGSize
+    let fitsSidebar: Bool
     /// Top-left of the expanded panel. Nil until 「问」/「记」 opens; cleared when the float hides.
     @State private var placedOrigin: CGPoint? = nil
 
@@ -445,12 +441,11 @@ private struct GlobalFloatingSelectionLayer: View {
                     placedOrigin: $placedOrigin,
                     usesPlacedOrigin: usesPlacedOrigin,
                     initialOrigin: initialOrigin,
-                    anchor: interaction.selectionAnchor.map {
-                        FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y))
-                    },
+                    anchor: canvasAnchor,
                     canvasSize: canvasSize,
                     topInset: selectionTopInset,
-                    prefersAbove: interaction.selectionAnchor?.prefersAbove == true
+                    prefersAbove: interaction.selectionAnchor?.prefersAbove == true,
+                    selectionHeight: Double(interaction.selectionAnchor?.selectionHeight ?? 18 * textScale)
                 ))
                 .transition(.opacity)
             }
@@ -473,7 +468,6 @@ private struct GlobalFloatingSelectionLayer: View {
     private var showsGlobalFloatingAgent: Bool {
         // The selection composer stays beside the passage in every reading layout.
         !store.courseWorkspacePresented
-            && store.canShowSelectionPromptSurface
             && SelectionFloatingAgentPlacement.isVisible(
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
@@ -487,9 +481,16 @@ private struct GlobalFloatingSelectionLayer: View {
         expanded || interaction.keepFloatingSelectionForAnswer
     }
 
+    private var canvasAnchor: FloatingAgentCoordinate? {
+        guard let anchor = interaction.selectionAnchor else { return nil }
+        let hasContent = paneState.showReader || paneState.showNotes || paneState.showAgent
+        let left = fitsSidebar && libraryDrawer.isOpen && hasContent ? WeiBeiMetric.courseDrawerWidth : 0
+        return FloatingAgentCoordinate(x: Double(anchor.x - left), y: Double(anchor.y))
+    }
+
     private var initialOrigin: CGPoint {
         let point = SelectionFloatingAgentPlacement.initialTopLeft(
-            anchor: interaction.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
+            anchor: canvasAnchor,
             canvas: FloatingAgentCoordinate(x: Double(canvasSize.width), y: Double(canvasSize.height)),
             topInset: selectionTopInset,
             prefersAbove: interaction.selectionAnchor?.prefersAbove == true
@@ -516,6 +517,7 @@ private struct FloatingSelectionPositionModifier: ViewModifier {
     let canvasSize: CGSize
     let topInset: Double
     let prefersAbove: Bool
+    let selectionHeight: Double
 
     func body(content: Content) -> some View {
         content.modifier(FloatingSelectionPositionEffect(
@@ -523,7 +525,8 @@ private struct FloatingSelectionPositionModifier: ViewModifier {
             anchor: anchor,
             canvasSize: canvasSize,
             topInset: topInset,
-            prefersAbove: prefersAbove
+            prefersAbove: prefersAbove,
+            selectionHeight: selectionHeight
         ))
     }
 }
@@ -535,6 +538,7 @@ private struct FloatingSelectionPositionEffect: GeometryEffect {
     let canvasSize: CGSize
     let topInset: Double
     let prefersAbove: Bool
+    let selectionHeight: Double
 
     func effectValue(size: CGSize) -> ProjectionTransform {
         let topLeft: CGPoint
@@ -548,7 +552,8 @@ private struct FloatingSelectionPositionEffect: GeometryEffect {
                 surfaceHalfWidth: Double(size.width / 2),
                 measuredHalfHeight: Double(size.height / 2),
                 prefersAbove: prefersAbove,
-                prefersAnchorCenter: true
+                prefersAnchorCenter: true,
+                selectionHeight: selectionHeight
             )
             topLeft = CGPoint(x: center.x - Double(size.width / 2), y: center.y - Double(size.height / 2))
         }
@@ -791,6 +796,8 @@ private struct LibraryAwareEscapeBridge: View {
                 })
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
                 EscapeKeyBridge(onEscape: onDismissFloatingAgent)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && interaction.readerSelectionTranslation != nil {
+                EscapeKeyBridge(onEscape: { interaction.readerSelectionTranslation = nil })
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && paneState.showDocumentSearch {
                 EscapeKeyBridge(onEscape: onHideReaderSearch)
             } else if !courseWorkspacePresented && !libraryDrawer.isOpen && !store.readerSourceHighlight.isEmpty {
@@ -802,7 +809,6 @@ private struct LibraryAwareEscapeBridge: View {
 
     private var showsGlobalFloatingAgent: Bool {
         !courseWorkspacePresented
-            && store.canShowSelectionPromptSurface
             && SelectionFloatingAgentPlacement.isVisible(
                 surface: interaction.agentSurface,
                 hasSelection: interaction.selectionContext != nil || interaction.keepFloatingSelectionForAnswer,
@@ -1361,7 +1367,6 @@ private struct UnifiedTopBarView: View {
     @EnvironmentObject private var paneState: WorkspacePaneState
     @EnvironmentObject private var interaction: WorkspaceInteractionState
     @Environment(\.weiBeiTextScale) private var textScale
-    let isImmersiveLayout: Bool
     let isFullScreen: Bool
     let contentTopInset: CGFloat
     var searchFocused: FocusState<Bool>.Binding
@@ -1376,9 +1381,20 @@ private struct UnifiedTopBarView: View {
             center: toolbarContent(paneToggleCluster),
             trailing: toolbarContent(trailingControls),
             overflowMenus: toolbarOverflowMenus,
-            isVisible: !store.courseWorkspacePresented
+            isVisible: !store.courseWorkspacePresented,
+            isFullScreen: isFullScreen
         )
         .frame(height: 0)
+        .overlay(alignment: .top) {
+            if isFullScreen && !store.courseWorkspacePresented {
+                CatalystFullScreenToolbar(
+                    leading: toolbarContent(leftPrimaryControls),
+                    center: toolbarContent(paneToggleCluster),
+                    trailing: toolbarContent(trailingControls),
+                    height: barHeight
+                )
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if paneState.showDocumentSearch && shouldShowSearchAction {
                 let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -1409,7 +1425,7 @@ private struct UnifiedTopBarView: View {
                 .overlay { shape.stroke(searchClusterStroke, lineWidth: 1) }
                 .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.36 : 0.16), radius: 16, y: 8)
                 .padding(.trailing, 12)
-                .padding(.top, contentTopInset + 5)
+                .padding(.top, (isFullScreen ? max(contentTopInset, barHeight) : contentTopInset) + 5)
             }
         }
         .zIndex(10)
@@ -1435,9 +1451,9 @@ private struct UnifiedTopBarView: View {
             }
         ]
         let panes = [
-            toolbarAction(store.ui("文稿", "Document"), id: "reader", selected: store.isPaneToggleActive(.reader), action: store.toggleReader),
-            toolbarAction(store.ui("对话", "Chat"), id: "agent", selected: store.isPaneToggleActive(.agent), action: store.toggleAgent),
-            toolbarAction(store.ui("笔记", "Notes"), id: "notes", selected: store.isPaneToggleActive(.notes), action: store.toggleNotes)
+            toolbarAction(store.ui("文稿", "Document"), id: "reader", selected: store.isPaneVisible(.reader), action: store.toggleReader),
+            toolbarAction(store.ui("对话", "Chat"), id: "agent", selected: store.isPaneVisible(.agent), action: store.toggleAgent),
+            toolbarAction(store.ui("笔记", "Notes"), id: "notes", selected: store.isPaneVisible(.notes), action: store.toggleNotes)
         ]
         var actions: [UIAction] = []
         if updateService.showsToolbarControl {
@@ -1764,7 +1780,6 @@ private struct UnifiedTopBarView: View {
                 appeared = true
             }
         }
-        .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
         // Pane toggle active states live on paneState — keep this chrome reactive without ContentView.
         .animation(WeiBeiMotion.feedback, value: paneState.showReader)
         .animation(WeiBeiMotion.feedback, value: paneState.showAgent)
@@ -1901,30 +1916,30 @@ private struct UnifiedTopBarView: View {
         WeiBeiSegmentedControl(segments: [
             WeiBeiSegmentedControl.Segment(
                 id: "reader",
-                systemImage: "doc.text",
-                help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
-                isSelected: store.isPaneToggleActive(.reader),
+                systemImage: WorkspacePaneRole.reader.systemImage,
+                help: store.isPaneVisible(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
+                isSelected: store.isPaneVisible(.reader),
                 action: store.toggleReader
             ),
             WeiBeiSegmentedControl.Segment(
                 id: "agent",
-                systemImage: "text.bubble",
+                systemImage: WorkspacePaneRole.agent.systemImage,
                 help: agentPaneToggleHelp,
-                isSelected: store.isPaneToggleActive(.agent),
+                isSelected: store.isPaneVisible(.agent),
                 action: store.toggleAgent
             ),
             WeiBeiSegmentedControl.Segment(
                 id: "notes",
-                systemImage: "note.text",
-                help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
-                isSelected: store.isPaneToggleActive(.notes),
+                systemImage: WorkspacePaneRole.notes.systemImage,
+                help: store.isPaneVisible(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
+                isSelected: store.isPaneVisible(.notes),
                 action: store.toggleNotes
             ),
         ])
     }
 
     private var agentPaneToggleHelp: String {
-        if store.isPaneToggleActive(.agent) {
+        if store.isPaneVisible(.agent) {
             return store.ui("隐藏对话", "Hide chat")
         }
         if interaction.selectionContext != nil {
@@ -2061,36 +2076,15 @@ private struct LayoutContentView: View {
     @AppStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
     
     var body: some View {
-        Group {
-            switch store.layout {
-            case .documentAgentNotes, .documentNotesAgent:
-                documentPaneLayoutView()
-            // Keep the pane full-height so its shared mask can fade content
-            // within the toolbar, rather than clipping it below the gradient.
-            case .immersiveReading:
-                PersistentPaneHost(role: .reader, registry: paneHostRegistry)
-                    .ignoresSafeArea(.container, edges: .top)
-            case .immersiveConversation:
-                PersistentPaneHost(role: .agent, registry: paneHostRegistry)
-                    .ignoresSafeArea(.container, edges: .top)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(WeiBeiTransition.layout)
-            case .immersiveWriting:
-                PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                    .ignoresSafeArea(.container, edges: .top)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .transition(WeiBeiTransition.layout)
-        // Document-internal pane toggles must not re-trigger SwiftUI layout animation.
-        .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
-        // Opening the selection float must not animate this workspace. That
-        // transaction was rebuilding the reader and painting the document again.
-        .animation(nil, value: interaction.agentSurface)
-        // Touch pane flags so SwiftUI rebuilds visibleOrder when only paneState publishes.
-        .animation(nil, value: paneState.showReader)
-        .animation(nil, value: paneState.showAgent)
-        .animation(nil, value: paneState.showNotes)
+        documentPaneLayoutView()
+            .transition(WeiBeiTransition.layout)
+            // Opening the selection float must not animate this workspace. That
+            // transaction was rebuilding the reader and painting the document again.
+            .animation(nil, value: interaction.agentSurface)
+            // Touch pane flags so SwiftUI rebuilds visibleOrder when only paneState publishes.
+            .animation(nil, value: paneState.showReader)
+            .animation(nil, value: paneState.showAgent)
+            .animation(nil, value: paneState.showNotes)
     }
 
     private var firstSplit: Binding<CGFloat> {
@@ -2381,6 +2375,7 @@ struct PersistentPaneHost: NSViewRepresentable {
 
 struct PersistentPaneRoot: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneState: WorkspacePaneState
     let role: WorkspacePaneRole
 
     var body: some View {
@@ -2407,7 +2402,6 @@ struct PersistentPaneRoot: View {
         switch role {
         case .reader:
             ReaderView(
-                isImmersive: store.layout == .immersiveReading,
                 showsFloatingTitle: true,
                 floatingTitleReorderRole: reorderRole
             )
@@ -2422,13 +2416,8 @@ struct PersistentPaneRoot: View {
     }
 
     private var reorderRole: WorkspacePaneRole? {
-        guard store.visibleDocumentPaneOrder.count > 1 else { return nil }
-        switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            return role
-        case .immersiveReading, .immersiveConversation, .immersiveWriting:
-            return nil
-        }
+        let visibleCount = [paneState.showReader, paneState.showAgent, paneState.showNotes].filter { $0 }.count
+        return visibleCount > 1 ? role : nil
     }
 }
 

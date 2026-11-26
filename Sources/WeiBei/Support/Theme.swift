@@ -212,27 +212,6 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
         language.text("切换外观主题", "Switch appearance theme")
     }
 
-    var systemImage: String {
-        switch self {
-        case .paper:
-            return "sun.max"
-        case .xuan:
-            return "doc.plaintext"
-        case .inkstone:
-            return "moon.stars"
-        case .stele:
-            return "rectangle.split.3x1"
-        case .glassLight:
-            return "sun.haze"
-        case .glassDark:
-            return "moon.haze"
-        case .glassMist:
-            return "cloud.fog"
-        case .glassSlate:
-            return "cloud.moon"
-        }
-    }
-
     var colorScheme: ColorScheme {
         isDark ? .dark : .light
     }
@@ -1925,6 +1904,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     var horizontalPadding: CGFloat = 8
     var neutralHoverWhenInactive = false
     var idleOpacity: Double = 0.20
+    var cornerRadius: CGFloat = WeiBeiMetric.controlRadius
     @State private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -1936,7 +1916,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
             .frame(height: height)
             .contentShape(Rectangle())
             .background(background(isPressed: configuration.isPressed))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
             .shadow(color: WeiBeiTheme.ink.opacity(hovering ? 0.08 : 0), radius: 2, y: 1)
@@ -2181,18 +2161,6 @@ extension View {
                     )
             }
             .shadow(color: WeiBeiTheme.ink.opacity(shadowOpacity * 0.50), radius: 7, y: 3)
-    }
-
-    func weibeiAnnotationPanel(cornerRadius: CGFloat = 7) -> some View {
-        self
-            .foregroundStyle(WeiBeiTheme.ink)
-            .background(WeiBeiTheme.paperRaised.opacity(0.96))
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.86), lineWidth: 1)
-            }
-            .shadow(color: WeiBeiTheme.ink.opacity(0.045), radius: 7, y: 3)
     }
 
     func weibeiHoverLift(active: Bool, amount: CGFloat = 1.5) -> some View {

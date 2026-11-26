@@ -11,21 +11,6 @@ import PDFKit
 import SwiftUI
 import WeiBeiCore
 
-struct NotesAgentView: View {
-    @EnvironmentObject private var store: WorkspaceStore
-
-    var body: some View {
-        VStack(spacing: 0) {
-            NotePaneView()
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.50))
-                .frame(height: 1)
-            AgentPaneView()
-        }
-        .weibeiPanel()
-    }
-}
-
 private extension View {
     func weibeiPaneHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View {
         weibeiPaneHeaderChrome(appearanceMode: appearanceMode, compact: false)
@@ -153,6 +138,7 @@ struct PaneHeaderReorderModifier: ViewModifier {
     @State private var cursorPushed = false
 
     var role: WorkspacePaneRole?
+    var liftsContent = true
 
     func body(content: Content) -> some View {
         if let role {
@@ -172,8 +158,8 @@ struct PaneHeaderReorderModifier: ViewModifier {
                 }
                 .weiBeiFadeWhenReducingMotion(dragActive)
                 .contentShape(Rectangle())
-                .offset(y: !reduceMotion && (hovering || dragActive) ? -1 : 0)
-                .scaleEffect(reduceMotion ? 1 : (dragActive ? 1.01 : hovering ? 1.004 : 1), anchor: .top)
+                .offset(y: liftsContent && !reduceMotion && (hovering || dragActive) ? -1 : 0)
+                .scaleEffect(reduceMotion || !liftsContent ? 1 : (dragActive ? 1.01 : hovering ? 1.004 : 1), anchor: .top)
                 .textSelection(.disabled)
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 12, coordinateSpace: .global)
@@ -294,7 +280,7 @@ struct NotePaneView: View {
         GeometryReader { geometry in
             let railOnly = ContentRailMetrics.isRailOnly(
                 availableWidth: geometry.size.width,
-                allowed: store.layout.allowsRailOnlyPanes
+                allowed: true
             )
             let railItems = noteRailItems
             ZStack(alignment: .topLeading) {
@@ -335,24 +321,22 @@ struct NotePaneView: View {
                 .opacity(railOnly ? 0 : 1)
                 .allowsHitTesting(!railOnly)
 
-                if store.layout != .immersiveWriting {
-                    ContentRailView(
-                        label: store.ui("文稿目录", "Draft outline"),
-                        items: railItems,
-                        activeID: activeNoteRailID ?? railItems.first?.id,
-                        appearanceMode: store.appearanceMode,
-                        isRailOnly: railOnly,
-                        availableWidth: geometry.size.width,
-                        topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
-                        onActivate: { activateNoteRailItem($0, railOnly: railOnly) },
-                        motionPreference: store.motionPreference
-                    )
-                    .zIndex(4)
-                }
+                ContentRailView(
+                    label: store.ui("文稿目录", "Draft outline"),
+                    items: railItems,
+                    activeID: activeNoteRailID ?? railItems.first?.id,
+                    appearanceMode: store.appearanceMode,
+                    isRailOnly: railOnly,
+                    availableWidth: geometry.size.width,
+                    topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
+                    onActivate: { activateNoteRailItem($0, railOnly: railOnly) },
+                    motionPreference: store.motionPreference
+                )
+                .zIndex(4)
             }
             .overlay(alignment: .top) {
                 if !showsPaneHeader && hasNoteContent && !railOnly {
-                    immersiveNoteHeader
+                    floatingNoteHeader
                 }
             }
         }
@@ -430,6 +414,7 @@ struct NotePaneView: View {
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
                 typewriterButton
+                notePDFExportButton
                 ContextualContentListButton(kind: .note)
                 ExcerptBookButton()
                 newNoteControl
@@ -441,7 +426,7 @@ struct NotePaneView: View {
         }
     }
 
-    private var immersiveNoteHeader: some View {
+    private var floatingNoteHeader: some View {
         ZStack(alignment: .top) {
             ImmersiveHoverTitleView(
                 mark: "NOTE",
@@ -453,6 +438,7 @@ struct NotePaneView: View {
             ) {
                 NoteSaveStatusLabel(session: store.noteEditingSession)
                 typewriterButton
+                notePDFExportButton
                 ContextualContentListButton(kind: .note)
                 ExcerptBookButton()
                 newNoteControl
@@ -465,6 +451,22 @@ struct NotePaneView: View {
                     .padding(.top, 42)
                     .transition(WeiBeiTransition.floating)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var notePDFExportButton: some View {
+        if let itemID = store.activeNoteItemID {
+            let label = store.ui("导出 PDF…", "Export PDF…")
+            Button {
+                store.notePDFExportRequest = NotePDFExportRequest(itemID: itemID)
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .accessibilityLabel(label)
+            .accessibilityIdentifier("note-pdf-open")
+            .help(label)
         }
     }
 
@@ -635,11 +637,6 @@ struct NotePaneView: View {
         }
     }
 
-    private func railPreviewText(_ value: String) -> String {
-        let collapsed = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        return String(collapsed.prefix(180))
-    }
-
     private var richEditor: some View {
         let recoveryGeneration = editorRecoveryGeneration
         return RichMarkdownEditorView(documentID: store.activeNoteEditorDocumentID, markdown: store.noteText, command: Binding(get: {
@@ -797,33 +794,18 @@ private struct NoteSaveStatusLabel: View {
         if let title {
             Text(title)
                 .weiBeiText(10.5, weight: .medium)
-                .foregroundStyle(
-                    store.activeNoteSaveStatus == .failed
-                        || store.activeNoteSaveStatus == .externallyModified
-                        ? WeiBeiTheme.failure
-                        : WeiBeiTheme.secondaryInk
-                )
+                .foregroundStyle(WeiBeiTheme.failure)
                 .lineLimit(1)
                 .accessibilityLabel(Text(title))
         }
     }
 
     private var title: String? {
-        if store.activeNoteSaveStatus == .saving {
-            guard session.showsProlongedSavingLabel else { return nil }
-            return store.ui("保存中", "Saving")
-        }
-        guard store.activeNoteSaveStatus.showsStatusLabel else { return nil }
-        switch store.activeNoteSaveStatus {
-        case .saving:
-            return nil
-        case .failed:
-            return store.ui("保存失败", "Save Failed")
-        case .externallyModified:
-            return store.ui("外部修改", "Modified Externally")
-        case .idle, .writtenToFile, .savedInWeiBei:
-            return nil
-        }
+        let status = store.activeNoteSaveStatus
+        guard status.showsStatusLabel else { return nil }
+        return status == .failed
+            ? store.ui("保存失败", "Save Failed")
+            : store.ui("外部修改", "Modified Externally")
     }
 }
 
@@ -1309,7 +1291,7 @@ private final class AgentPaneWidthRelay {
 }
 
 /// Standard chat column metrics — one centered axis shared by messages and composer.
-/// Compact = three-pane agent strip; wide = immersive conversation (Codex-like full chat).
+/// A conversation that fills the workspace uses the wide column.
 ///
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
@@ -1318,8 +1300,7 @@ enum AgentChatLayoutMetrics {
     /// outright, wide windows cap at ChatGPT's measured column (~960pt, 65% of a
     /// 1470pt window) — user-calibrated against side-by-side screenshots.
     static let wideMaxWidth: CGFloat = 960
-    /// Content columns at least this wide read with the immersive typography tier,
-    /// regardless of which layout hosts the chat pane.
+    /// Content columns at least this wide use the wide typography tier.
     static let wideTypographyMinContentWidth: CGFloat = 620
     static let compactSideGutter: CGFloat = 12
     /// Codex-style: modest side margin; column grows/shrinks with the window.
@@ -1329,17 +1310,10 @@ enum AgentChatLayoutMetrics {
     static let floatingBodyFontSize: CGFloat = 11
     static let floatingUserFontSize: CGFloat = 12
 
-    static func isWide(layout: WorkspaceLayout) -> Bool {
-        // Immersive conversation only — document multi-pane keeps compact strip metrics.
-        layout == .immersiveConversation
-    }
-
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // ChatGPT-like in every layout: fill narrow panes outright, cap wide
-        // windows at one fixed readable column. The layout enum no longer picks
-        // a different ceiling — a full-window chat tab reads like immersive.
+        // Fill narrow panes and cap the column in wide windows.
         return min(usable, wideMaxWidth)
     }
 }
@@ -1400,12 +1374,8 @@ struct AgentPaneView: View {
         store.messages.suffix(max(agentVisibleMessageLimit, 0))
     }
 
-    private var isImmersiveConversation: Bool {
-        store.layout == .immersiveConversation
-    }
-
     private var usesWideChatLayout: Bool {
-        AgentChatLayoutMetrics.isWide(layout: store.layout)
+        !paneState.showReader && !paneState.showNotes
     }
 
     /// Semantic renderer width; the GeometryReader proposal owns visible layout.
@@ -1418,8 +1388,8 @@ struct AgentPaneView: View {
     }
 
     var body: some View {
-        let wide = AgentChatLayoutMetrics.isWide(layout: store.layout)
-        let showsContentRail = !wide && store.layout.allowsRailOnlyPanes
+        let wide = usesWideChatLayout
+        let showsContentRail = !wide
         let railItems = showsContentRail ? agentRailItems : []
         // One O(n) set per render — row backgrounds only do Set.contains.
         let railTurnStartMessageIDs = showsContentRail ? agentRailTurnStartMessageIDs : []
@@ -1430,7 +1400,7 @@ struct AgentPaneView: View {
             let liveAvailableWidth = max(paneGeometry.size.width, 1)
             let railOnly = ContentRailMetrics.isRailOnly(
                 availableWidth: liveAvailableWidth,
-                allowed: store.layout.allowsRailOnlyPanes
+                allowed: !wide
             )
             let contentWidth = AgentChatLayoutMetrics.contentWidth(
                 availableWidth: liveAvailableWidth,
@@ -1571,7 +1541,6 @@ struct AgentPaneView: View {
                                 reduceMotion ? nil : WeiBeiMotionTokens.easeInOut.animation(WeiBeiMotionTokens.durationLg),
                                 value: paneState.centersInitialAgentComposer
                             )
-                            .animation(WeiBeiMotion.layout, value: store.layout)
                             .animation(WeiBeiMotion.layout, value: wide)
                     }
                     .overlay(alignment: .bottom) {
@@ -1684,19 +1653,6 @@ struct AgentPaneView: View {
         }
         .onChange(of: Set(store.visibleDocumentPaneOrder)) { _, _ in
             beginPaneStructureTransition()
-        }
-        .onChange(of: store.layout) { _, layout in
-            // Entering immersive: seed wide so we never flash the last three-pane strip width.
-            // Leaving immersive: drop to 0 so the next probe owns the multi-pane strip.
-            if layout == .immersiveConversation {
-                if measuredPaneWidth < 700 {
-                    measuredPaneWidth = max(measuredPaneWidth, 1100)
-                }
-            } else if measuredPaneWidth > 700 {
-                // Restore the last real compact width; the next probe refines it.
-                // Immersive measurements never overwrite this compact seed.
-                measuredPaneWidth = lastReadablePaneWidth
-            }
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -1859,7 +1815,6 @@ struct AgentPaneView: View {
                     || store.agentStreaming.isDisplaying(message.id)
                     ? store.agentStreaming
                     : inertAgentStreamingState,
-                // Typography follows the real column width, not the layout enum.
                 isChatWideTypography: wide
                     || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
             )
@@ -2201,10 +2156,6 @@ struct AgentPaneView: View {
             availableWidth: max(agentPaneWidth, 1),
             wide: usesWideChatLayout
         )
-    }
-
-    private var agentContentMaxWidth: CGFloat? {
-        agentInputMaxWidth
     }
 
     private var agentScrollBottomInset: CGFloat {
@@ -2727,13 +2678,14 @@ struct FloatingSelectionAgentView: View {
                let record = store.selectionRemarkRecords.first(where: { $0.id == interaction.selectionContext?.id }) {
                 ExcerptRemarkPopover(record: record, close: closeFloatingAgent)
                     .id(record.id)
+                    .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
             } else if showsExpandedBody {
                 expandedBody
+                    .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
             } else {
                 promptBody
             }
         }
-        .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
 #if targetEnvironment(macCatalyst)
         .background {
             ConversationSelectionPanelProbe(position: placedOrigin)
@@ -2824,6 +2776,7 @@ struct FloatingSelectionAgentView: View {
         Group {
             if showsNoteFormattingToolbar {
                 noteFormattingToolbar
+                    .weibeiFloatingPanel(cornerRadius: WeiBeiMetric.controlRadius)
             } else {
                 defaultPromptBody
             }
@@ -2835,36 +2788,41 @@ struct FloatingSelectionAgentView: View {
             Button {
                 openExpandedComposer()
             } label: {
-                Text(store.ui("问", "Ask")).frame(minWidth: 28)
+                Text(store.ui("问", "Ask"))
             }
-            .foregroundStyle(WeiBeiTheme.link)
             .accessibilityLabel(Text(store.ui("就这段提问", "Ask about this passage")))
             .help(store.ui("就这段提问", "Ask about this passage"))
 
             if store.canOpenSelectedSourceReference {
-                promptSeparator
                 Button(store.ui("来源", "Source")) {
                     openSourceReference()
                 }
             }
 
             if store.selectionContext != nil {
-                promptSeparator
                 Button {
                     openRemarkComposer()
                 } label: {
-                    Text(store.ui("记", "Remark")).frame(minWidth: 28)
+                    Text(store.ui("记", "Remark"))
                 }
-                .foregroundStyle(WeiBeiTheme.link)
                 .accessibilityLabel(Text(store.ui("记下这段", "Remark on this passage")))
                 .help(store.ui("记下这段（留空只存原文）", "Remark on this passage (empty saves the passage)"))
             }
+
+            if let selection = store.selectionContext, selection.source == .document {
+                ReaderSelectionTranslationButton(selection: selection)
+            }
         }
-        .weiBeiText(13, weight: .medium)
-        .buttonStyle(WeiBeiTextActionButtonStyle(fontSize: 13, height: 32))
-        .padding(.horizontal, 4)
-        .frame(height: 34)
+        .buttonStyle(SelectionPromptSegmentStyle())
         .fixedSize()
+        .background(WeiBeiTheme.paperRaised, in: Capsule())
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .strokeBorder(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: WeiBeiTheme.ink.opacity(0.10), radius: 5, y: 2)
     }
 
     private var showsNoteFormattingToolbar: Bool {
@@ -3303,10 +3261,6 @@ struct FloatingSelectionAgentView: View {
         store.streaming(in: store.activeSelectionAskThreadID)
     }
 
-    private var canPolishNoteSelection: Bool {
-        store.selectionContext?.isNoteSelection == true
-    }
-
     private var showsFloatingFeed: Bool {
         !visibleFloatingMessages.isEmpty || store.isFloatingChatRunning
     }
@@ -3549,6 +3503,24 @@ struct FloatingSelectionAgentView: View {
         withTransaction(transaction) {
             placedOrigin = parked
         }
+    }
+}
+
+private struct SelectionPromptSegmentStyle: ButtonStyle {
+    @Environment(\.weiBeiTextScale) private var textScale
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let highlight = configuration.isPressed ? 0.16 : hovering ? 0.08 : 0
+        configuration.label
+            .weiBeiText(13, weight: .medium)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .padding(.horizontal, 12)
+            .frame(minWidth: 42)
+            .frame(height: 28 * max(1, textScale))
+            .background(WeiBeiTheme.ink.opacity(highlight))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
     }
 }
 
@@ -5226,8 +5198,8 @@ private struct AgentMessageMarkdownText: View {
     var isStreaming = false
     var contentBlocks: [AgentMessageContentBlock] = []
     @State private var expandedSourceURL: String?
-    @State private var markdownMemo = AgentMessageMarkdownMemo()
     @State private var imageHandler = MarkdownImageSchemeHandler()
+    @State private var markdownMemo = AgentMessageMarkdownMemo()
 
     private var sourcePresentation: AgentReplySourceInlinePresentation {
         AgentReplySourceInlinePresentation(text: text, sources: sources, language: store.interfaceLanguage)
@@ -5250,46 +5222,10 @@ private struct AgentMessageMarkdownText: View {
                     openLink: openLink
                 )
 #else
-                NativeChatMarkdownView(
-                    markdown: preparedMarkdown,
-                    messageID: messageID,
-                    fontSize: bodyFontSize,
-                    isDark: store.appearanceMode.isDark,
-                    appearanceKey: store.appearanceMode.rawValue,
-                    interfaceLanguage: store.interfaceLanguage,
-                    placeholderHeight: initialBodyHeight,
-                    onOpenURL: openLink,
-                    visualizationView: { identifier, width, onHeight in
-                        guard let messageID else { return nil }
-                        let host = NSHostingView(rootView: AgentNativeContentAttachment(
-                            messageID: messageID,
-                            identifier: identifier.removingPercentEncoding ?? identifier,
-                            initialBlocks: contentBlocks,
-                            onHeight: onHeight
-                        ).environmentObject(store))
-                        host.sizingOptions = []
-                        host.frame.size = NSSize(width: width, height: 160)
-                        return host
-                    },
-                    imageLoader: { source, completion in
-                        imageHandler.update(
-                            markdownBaseURLString: store.currentMarkdownBaseURL?.absoluteString ?? "",
-                            attachmentDirectory: store.currentAttachmentDirectory,
-                            appearanceMode: store.appearanceMode,
-                            interfaceLanguage: store.interfaceLanguage
-                        )
-                        imageHandler.loadImage(source: source, completion: completion)
-                    }
-                )
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                plainText
 #endif
             } else {
-                Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
-                    .weiBeiText(compact ? AgentChatLayoutMetrics.floatingUserFontSize : 14.5)
-                    .lineSpacing(compact ? 4.2 : 4.5)
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.disabled)
+                plainText
             }
         }
         .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown))
@@ -5314,24 +5250,10 @@ private struct AgentMessageMarkdownText: View {
             .frame(width: 276)
             .padding(.vertical, 4)
         }
-        .onDisappear {
-            imageHandler.invalidate()
-            imageHandler = MarkdownImageSchemeHandler()
-        }
     }
 
     private var bodyFontSize: CGFloat {
         (compact ? AgentChatLayoutMetrics.floatingBodyFontSize : (isChatWideTypography ? 16 : 14)) * textScale
-    }
-
-    private var initialBodyHeight: CGFloat {
-        guard !compact, !isStreaming, sources.isEmpty else { return 1 }
-        let key = AgentFinalizedMarkdownHeightCache.cacheKey(
-            messageID: messageID, text: text,
-            widthBucket: AgentFinalizedMarkdownHeightCache.widthBucket(layoutWidth),
-            wideTypography: isChatWideTypography, textScale: textScale
-        )
-        return max(1, (AgentFinalizedMarkdownHeightCache.height(for: key) ?? 21) - 20)
     }
 
     private var expandedSources: [AgentReplySource] {
@@ -5365,6 +5287,15 @@ private struct AgentMessageMarkdownText: View {
 #endif
             }
         }
+    }
+
+    private var plainText: some View {
+        Text((try? AttributedString(markdown: text)) ?? AttributedString(text))
+            .weiBeiText(compact ? AgentChatLayoutMetrics.floatingUserFontSize : 14.5)
+            .lineSpacing(compact ? 4.2 : 4.5)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.disabled)
     }
 }
 

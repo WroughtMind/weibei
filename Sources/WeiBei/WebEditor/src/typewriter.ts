@@ -1,7 +1,9 @@
 import { Plugin } from '@milkdown/kit/prose/state';
 
 export const setTypewriterMode = (enabled: boolean) => {
-  document.body.dataset.typewriter = String(enabled);
+  const value = String(enabled);
+  if (document.body.dataset.typewriter === value) return;
+  document.body.dataset.typewriter = value;
   document.dispatchEvent(new Event('weibei-typewriter-changed'));
 };
 
@@ -45,7 +47,6 @@ export const createTypewriterPlugin = () => {
         // ProseMirror finishes the IME transaction after the native end event.
         compositionTimer = window.setTimeout(schedule, 30);
       };
-      const modeChanged = () => { cancel(); if (enabled()) schedule(); };
       view.dom.addEventListener('beforeinput', schedule);
       view.dom.addEventListener('input', schedule);
       view.dom.addEventListener('keydown', keydown);
@@ -53,7 +54,7 @@ export const createTypewriterPlugin = () => {
       view.dom.addEventListener('compositionend', compositionEnd);
       scroll.addEventListener('wheel', cancel, { passive: true });
       scroll.addEventListener('pointerdown', cancel);
-      document.addEventListener('weibei-typewriter-changed', modeChanged);
+      document.addEventListener('weibei-typewriter-changed', cancel);
       return {
         update(updatedView, previousState) {
           if (pendingInput && updatedView.state.doc !== previousState.doc) schedule();
@@ -67,7 +68,7 @@ export const createTypewriterPlugin = () => {
           view.dom.removeEventListener('compositionend', compositionEnd);
           scroll.removeEventListener('wheel', cancel);
           scroll.removeEventListener('pointerdown', cancel);
-          document.removeEventListener('weibei-typewriter-changed', modeChanged);
+          document.removeEventListener('weibei-typewriter-changed', cancel);
         },
       };
     },

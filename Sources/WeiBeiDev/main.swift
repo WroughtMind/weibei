@@ -412,12 +412,8 @@ private let forbiddenResourceMarkers = [
     "self-check-spec",
     "RichAnswerVerification",
     "verification-only",
-    "Vendor/PiRuntime/",
-    "prepare_pi_runtime.sh",
-    "PiRuntime/bin/pi",
 ]
 
-private let retiredRuntimeResourceDirectories = ["PiRuntime", "BunRuntime"]
 
 private let forbiddenTestResourceNames = [
     "rich_answer_worker_self_test.py",
@@ -511,9 +507,6 @@ func runVerifyProductionHygiene(arguments: [String]) {
     let resources = appBundle.appendingPathComponent("Contents/Resources")
     let resourceFiles = filesRecursively(in: resources)
     for file in resourceFiles {
-        if file.pathComponents.contains(where: { retiredRuntimeResourceDirectories.contains($0) }) {
-            fail("packaged retired runtime resource \(file.path)", exitCode: 7)
-        }
         if let data = try? Data(contentsOf: file),
            let marker = forbiddenResourceMarkers.first(where: { dataContains(data, $0) }) {
             fail("resources contain '\(marker)'", exitCode: 6)

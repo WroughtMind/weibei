@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {genuiLabelGeometry} from './editor-probe-programs.mjs';
 import test from 'node:test';
 import {execFileSync} from 'node:child_process';
 import {runInNewContext} from 'node:vm';
 import mermaid from 'mermaid';
 const source=readFileSync(new URL('../../Sources/WeiBeiWebEditorCheck/main.swift',import.meta.url),'utf8');
-const program=source.match(/private func verifyGenuiLabelGeometry[\s\S]*?let script = """([\s\S]*?)"""/)[1];
+const program=genuiLabelGeometry(source);
 const baselineSource=execFileSync('git',['show','ea58f5c1:Sources/WeiBeiWebEditorCheck/main.swift'],{encoding:'utf8'});
-const baselineProgram=baselineSource.match(/private func verifyGenuiLabelGeometry[\s\S]*?let script = """([\s\S]*?)"""/)[1];
+const baselineProgram=genuiLabelGeometry(baselineSource);
 const rect=(width=100)=>({x:0,y:0,left:0,top:0,width,height:20,right:width,bottom:20});
 function fixture({mounted=true,clip=false,script=program,capturePayload=false}={}) {
  const style={fontFamily:'Host Font',fontSize:'13px',fontVariantNumeric:'normal',boxSizing:'border-box'};

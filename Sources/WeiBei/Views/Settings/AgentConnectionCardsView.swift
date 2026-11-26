@@ -956,7 +956,6 @@ private struct PerimeterComet: Shape {
 
 private enum ConnType {
     static var rowTitle: Font { .system(size: 13, weight: .semibold) }
-    static var rowTitleSecondary: Font { .system(size: 13, weight: .medium) }
     static var detail: Font { .system(size: 12, weight: .regular) }
     static var pill: Font { .system(size: 12, weight: .medium) }
     static var menu: Font { .system(size: 13, weight: .semibold) }

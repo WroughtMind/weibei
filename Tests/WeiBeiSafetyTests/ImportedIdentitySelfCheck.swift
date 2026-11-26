@@ -73,8 +73,7 @@ enum ImportedIdentitySelfCheck {
                 noteA.id: "# A笔记\n\n旧正文",
                 noteB.id: "# B笔记\n\n正文",
             ],
-            activeNotebookItemID: noteA.id,
-            noteSourceLinksMigrationVersion: 1
+            activeNotebookItemID: noteA.id
         ))
 
         var rejectsWorkspaceWrite = false
@@ -265,7 +264,6 @@ enum ImportedIdentitySelfCheck {
                 activeNotebookItemID: note.id,
                 studySessions: [oldChat],
                 activeStudySessionID: oldChat.id,
-                workspaceLayout: WorkspaceLayout.documentAgentNotes.rawValue,
                 showReader: true,
                 showAgent: true,
                 showNotes: true
@@ -395,7 +393,7 @@ enum ImportedIdentitySelfCheck {
         store.showReader = false
         store.showAgent = true
         store.showNotes = false
-        store.showRightPane = true
+        store.paneState.setDocumentPanes(reader: store.showReader, agent: true, notes: true)
         store.focusedPane = .agent
         store.focusRequest += 1
         store.showDocumentSearch = true
@@ -414,16 +412,16 @@ enum ImportedIdentitySelfCheck {
         try check(paneChanges > 0, "paneState 未发布可见性/焦点变更")
         try check(interactionChanges > 0, "interaction 未发布选区/浮层变更")
 
-        // showRightPane 必须单次发布（notes+agent 批量写入）。
+        // 同时关闭笔记和对话只发布一次。
         let beforeRight = paneChanges
-        store.showRightPane = false
+        store.paneState.setDocumentPanes(reader: store.showReader, agent: false, notes: false)
         try check(
             paneChanges == beforeRight + 1,
-            "showRightPane 未收敛为单次 paneState 发布（实际 +\(paneChanges - beforeRight)）"
+            "多栏显隐未收敛为单次 paneState 发布（实际 +\(paneChanges - beforeRight)）"
         )
         try check(
-            !store.showAgent && !store.showNotes && !store.showRightPane,
-            "showRightPane=false 后 notes/agent 未同时关闭"
+            !store.showAgent && !store.showNotes,
+            "笔记和对话未同时关闭"
         )
     }
 
@@ -691,13 +689,13 @@ enum ImportedIdentitySelfCheck {
             ),
             "课程 A 无法切到指定 Chat"
         )
-        store.setLayout(.immersiveReading)
+        store.paneState.setDocumentPanes(reader: true, agent: false, notes: false)
         store.updateReaderHTMLLocation(
             id: "section-a-deep",
             title: "A 深读段",
             reason: "scroll"
         )
-        store.setLayout(.immersiveConversation)
+        store.paneState.setDocumentPanes(reader: false, agent: true, notes: false)
         let captureStartedAt = Date()
         try check(
             store.activateStudySession(
@@ -710,7 +708,7 @@ enum ImportedIdentitySelfCheck {
                     expectedCourseID: courseA.id,
                     expectedScopeNeedsReview: false
             ),
-            "沉浸对话无法切换并返回原 Chat"
+            "单开对话栏时无法切换并返回原对话"
         )
         let captureFinishedAt = Date()
         let pointA = try require(
@@ -723,7 +721,7 @@ enum ImportedIdentitySelfCheck {
                 && pointA.noteItemID == note.id
                 && pointA.savedAt.timeIntervalSince(captureStartedAt) >= 0
                 && captureFinishedAt.timeIntervalSince(pointA.savedAt) >= 0,
-            "沉浸阅读更新位置时丢掉了同一现场的精确 Chat 或笔记"
+            "单开阅读栏更新位置时丢掉了同一现场的对话或笔记"
         )
 
         store.activateCourse(courseB.id)
@@ -771,7 +769,7 @@ enum ImportedIdentitySelfCheck {
             let courseQuestionStore = makeStore { data, url in
                 if rejectsCourseQuestionSave {
                     rejectedCourseQuestionSaves += 1
-                    throw CheckError.failed("预期中的课程首页问题保存失败")
+                    throw CheckError.failed("预期中的课程相关问题保存失败")
                 }
                 try data.write(to: url, options: [.atomic])
             }
@@ -793,16 +791,16 @@ enum ImportedIdentitySelfCheck {
                     expectedCourseID: courseA.id,
                     expectedScopeNeedsReview: false
                 ),
-                "无法准备课程首页复用的全局 Chat"
+                "无法准备课程空间复用的全局 Chat"
             )
             let originalChatID = try require(
                 courseQuestionStore.activeStudySessionID,
-                "课程首页问题前没有活动 Chat"
+                "课程相关问题前没有活动 Chat"
             )
             let originalSessionCount = courseQuestionStore.studySessions.count
             let originalMessages = try require(
                 courseQuestionStore.activeStudySession?.messages,
-                "课程首页问题前没有活动 Chat 历史"
+                "课程相关问题前没有活动 Chat 历史"
             )
             courseQuestionStore.presentCourseWorkspace(
                 .hub,
@@ -816,25 +814,23 @@ enum ImportedIdentitySelfCheck {
                 "打开另一门课程改变了全局 Chat 或清掉了原课程焦点"
             )
 
-            let question = "从课程 B 首页继续当前全局 Chat"
+            let question = "在课程 B 的对话栏继续当前对话"
             rejectsCourseQuestionSave = true
-            let routedChatID = courseQuestionStore.submitCourseHomeQuestion(
-                question,
-                in: courseB.id
-            )
-            let blockedPreparationQuestion = "准备期间不得覆盖的问题"
+            courseQuestionStore.activeCourseID = courseB.id
+            courseQuestionStore.dismissCourseWorkspace(restoringFocus: false)
+            courseQuestionStore.focus(.agent)
+            courseQuestionStore.saveComposerDraft(question, for: originalChatID)
+            courseQuestionStore.submitAgentDraft(targetCourseID: courseB.id)
+            let routedChatID = courseQuestionStore.activeStudySessionID
+            courseQuestionStore.submitAgentDraft(targetCourseID: courseB.id)
             try check(
-                courseQuestionStore.submitCourseHomeQuestion(
-                    blockedPreparationQuestion,
-                    in: courseB.id
-                ) == nil
-                    && courseQuestionStore.agentDraft == question,
-                "课程首页在请求准备期间覆盖了原问题"
+                courseQuestionStore.agentDraft == question,
+                "准备期间重复发送覆盖了原问题"
             )
-            try waitForCondition("课程首页保存失败时没有提供发送选择") {
+            try waitForCondition("对话保存失败时没有提供发送选择") {
                 courseQuestionStore.userOperationRisks.pendingRequest != nil
             }
-            try check(attemptedRequests.isEmpty, "用户尚未选择继续就发送了课程首页问题")
+            try check(attemptedRequests.isEmpty, "用户尚未选择继续就发送了课程相关问题")
             let sendRisk = try require(courseQuestionStore.userOperationRisks.pendingRequest, "发送风险提示丢失")
             courseQuestionStore.userOperationRisks.respond(to: sendRisk.id, continuing: true)
             var routedFailure: AgentMessage?
@@ -857,11 +853,11 @@ enum ImportedIdentitySelfCheck {
             } while Date() < routedDeadline
             let routedMessages = try require(
                 courseQuestionStore.activeStudySession?.messages,
-                "课程首页问题后活动 Chat 丢失"
+                "课程相关问题后活动 Chat 丢失"
             )
             let failure = try require(
                 routedFailure,
-                "用户选择继续后课程首页问题没有到达请求执行入口"
+                "用户选择继续后课程相关问题没有到达请求执行入口"
             )
             try check(
                 attemptedRequests.count == 1
@@ -869,7 +865,7 @@ enum ImportedIdentitySelfCheck {
                     && attemptedRequests.first?.projectScope.courseID == courseB.id.uuidString.lowercased()
                     && courseQuestionStore.userOperationRisks.pendingRequest == nil
                     && courseQuestionStore.workspaceSaveError != nil,
-                "未保存的课程首页问题没有按用户选择发送，或重复确认、隐去了保存失败"
+                "未保存的课程相关问题没有按用户选择发送，或重复确认、隐去了保存失败"
             )
             try check(
                 routedChatID == originalChatID
@@ -881,12 +877,12 @@ enum ImportedIdentitySelfCheck {
                     && routedMessages.contains {
                         $0.role == .user && $0.text == question
                     },
-                "课程首页问题新建了第二个 Chat 或破坏了原历史"
+                "课程相关问题新建了第二个 Chat 或破坏了原历史"
             )
             try check(
                 failure.origin?.chatID == originalChatID
                     && failure.origin?.courseID == courseB.id,
-                "课程首页问题失败后丢掉了原 Chat 或目标课程"
+                "课程相关问题失败后丢掉了原 Chat 或目标课程"
             )
             try check(
                 Set(
@@ -936,7 +932,7 @@ enum ImportedIdentitySelfCheck {
             } while Date() < retryDeadline
             let retryFailure = try require(
                 retriedFailure,
-                "选择继续后课程首页问题重试没有到达请求执行入口"
+                "选择继续后课程相关问题重试没有到达请求执行入口"
             )
             try check(
                 courseQuestionStore.activeStudySessionID == originalChatID
@@ -951,7 +947,7 @@ enum ImportedIdentitySelfCheck {
                     && courseQuestionStore.userOperationRisks.pendingRequest == nil
                     && retryFailure.origin?.chatID == originalChatID
                     && retryFailure.origin?.courseID == courseB.id,
-                "课程首页问题重试换了 Chat 或退回旧课程焦点"
+                "课程相关问题重试换了 Chat 或退回旧课程焦点"
             )
 
             rejectsCourseQuestionSave = false
@@ -962,7 +958,7 @@ enum ImportedIdentitySelfCheck {
             var recoveredRequest: StudyAgentRequest?
             courseQuestionStore.selfCheckAgentResponder = { request in
                 recoveredRequest = request
-                return StudyAgentReply(text: "保存恢复后的回答", backend: .native)
+                return StudyAgentReply(text: "保存恢复后的回答")
             }
             courseQuestionStore.retryAgentRequest(question, targetCourseID: courseB.id)
             try waitForCondition("保存恢复后无法重试原问题") {
@@ -1005,8 +1001,8 @@ enum ImportedIdentitySelfCheck {
         reopened.activateCourse(courseB.id)
         try check(reopened.openCourseMaterial(otherMaterial.id), "无法准备课程 B 的对照文稿")
         reopened.openCourseNote(otherNote.id)
-        reopened.setLayout(.documentAgentNotes)
-        reopened.swapThreePaneSecondaryPanes()
+        reopened.paneState.setDocumentPanes(reader: true, agent: true, notes: true)
+        reopened.threePaneOrder = [.reader, .notes, .agent]
         let paneOrderBeforeReading = reopened.threePaneOrder
         reopened.presentCourseWorkspace(.hub, courseID: courseA.id)
         let chatBBeforeReading = try require(
@@ -1026,7 +1022,6 @@ enum ImportedIdentitySelfCheck {
                 && reopened.showReader
                 && reopened.showAgent
                 && reopened.showNotes
-                && reopened.layout.isDocumentThreePane
                 && !reopened.courseWorkspacePresented,
             "继续阅读切换或改写了当前 Chat，或没有原样恢复课程 A 的位置、笔记和栏位顺序"
         )
@@ -1061,7 +1056,6 @@ enum ImportedIdentitySelfCheck {
                 && reopened.selectedMaterialItem?.id == materialBeforeConversation
                 && reopened.readerLocationID == locationBeforeConversation
                 && reopened.activeNotebookItemID == noteBeforeConversation
-                && reopened.layout.isDocumentThreePane
                 && reopened.focusedPane == .agent
                 && reopened.showReader
                 && reopened.showAgent
@@ -1922,7 +1916,6 @@ enum ImportedIdentitySelfCheck {
                 legacyID: "legacy-digest",
             ],
             activeNotebookItemID: legacyID,
-            noteSourceLinksMigrationVersion: 1,
             studyLocationsByItemID: [
                 canonicalID: StudyLocation(itemID: canonicalID, itemTitle: "规范项", locationTitle: "规范位置"),
                 legacyID: StudyLocation(itemID: legacyID, itemTitle: "旧项", locationTitle: "旧位置"),
@@ -1943,16 +1936,12 @@ enum ImportedIdentitySelfCheck {
             persisted.notesByItemID.first { $0.value == "旧项不同草稿" }?.key,
             "同身份冲突迁移丢失了旧项草稿"
         )
-        try check(preservedLegacyID != canonicalID, "同身份冲突迁移把两份不同草稿折叠到一个身份")
-        try check(preservedLegacyID.hasPrefix("imported:"), "同身份冲突旧项仍停留在路径身份")
+        try check(preservedLegacyID == legacyID, "同一文件的两份冲突草稿没有保留各自原来的身份")
         try check(
             store.importedItems.contains { $0.id == canonicalID }
-                && store.importedItems.contains {
-                    $0.id == preservedLegacyID || $0.id == legacyID
-                },
+                && store.importedItems.contains { $0.id == legacyID },
             "同身份冲突迁移删除了其中一个可达项"
         )
-        try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿")
         // S2 写出时尽量清空 pendingNoteWrites；草稿正文仍在 notesByItemID。
         try check(persisted.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移丢失了规范项草稿正文")
         try check(persisted.notesByItemID[preservedLegacyID] == "旧项不同草稿", "同身份冲突迁移丢失了旧项草稿正文")
@@ -2051,7 +2040,6 @@ enum ImportedIdentitySelfCheck {
             )
             try fixture.write(
                 PersistedWorkspace(
-                    noteSourceLinksMigrationVersion: 1,
                     selectionAskThreads: []
                 )
             )
@@ -2158,8 +2146,7 @@ enum ImportedIdentitySelfCheck {
                             contentRevision: 1,
                             contentDigest: nil
                         ),
-                    ],
-                    noteSourceLinksMigrationVersion: 1
+                    ]
                 )
             )
 
@@ -2232,8 +2219,7 @@ enum ImportedIdentitySelfCheck {
                             entryIdentity: legacyEntryIdentity,
                             documentIdentifier: 6_002
                         ),
-                    ],
-                    noteSourceLinksMigrationVersion: 1
+                    ]
                 )
             )
 
@@ -2295,8 +2281,7 @@ enum ImportedIdentitySelfCheck {
                             itemID: legacyID,
                             entryIdentity: entryIdentity
                         ),
-                    ],
-                    noteSourceLinksMigrationVersion: 1
+                    ]
                 )
             )
 
@@ -3280,8 +3265,7 @@ enum ImportedIdentitySelfCheck {
                         isSample: false
                     ),
                 ],
-                selectedItemID: firstLegacyID,
-                noteSourceLinksMigrationVersion: 1
+                selectedItemID: firstLegacyID
             )
         )
 

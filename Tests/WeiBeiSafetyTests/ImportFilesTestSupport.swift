@@ -52,3 +52,37 @@ func importFilesAndWait(
     }
     return box.result ?? []
 }
+
+@MainActor
+extension WorkspaceStore {
+    func createCourseInLibrary(title rawTitle: String) throws -> UUID {
+        try waitForCourseFileOperation {
+            try await self.createCourseInLibraryAsync(title: rawTitle)
+        }
+    }
+
+    func renameCourse(_ courseID: UUID, title rawTitle: String) {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard activeCourseRemovalTokens[courseID] == nil,
+              !title.isEmpty,
+              let index = courses.firstIndex(where: { $0.id == courseID }),
+              courses[index].title != title else { return }
+        courses[index].title = title
+        courses[index].updatedAt = Date()
+        save()
+    }
+
+    func assignItemIDs(_ itemIDs: Set<String>, to courseID: UUID) {
+        guard courses.contains(where: { $0.id == courseID }),
+              itemIDs.isDisjoint(with: activeItemFileMutationIDs) else {
+            return
+        }
+        let validItemIDs = Set(importedItems.map(\.id))
+        var memberships = courseMembershipIndex
+        memberships.assign(itemIDs: itemIDs.intersection(validItemIDs), to: courseID)
+        guard memberships.values != courseItemMemberships else { return }
+        courseItemMemberships = memberships.values
+        activeCourseID = courseID
+        save()
+    }
+}

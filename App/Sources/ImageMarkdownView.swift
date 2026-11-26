@@ -24,20 +24,12 @@ final class LabImages {
         guard loading.insert(source).inserted else { return }
         Task {
             do {
-                let data: Data
-                if source == "lab-image://landscape" {
-                    guard let url = Bundle.main.url(forResource: "landscape", withExtension: "png") else { throw CocoaError(.fileNoSuchFile) }
-                    data = try await Task.detached { try Data(contentsOf: url) }.value
-                } else {
-                    // Same bounded local-file, redirect and remote-address policy as the original editor.
-                    let loader = self.loader
-                    guard let loaded = await Task.detached(priority: .utility, operation: {
-                        await withCheckedContinuation { continuation in
-                            loader.loadImage(source: source) { continuation.resume(returning: $0) }
-                        }
-                    }).value else { throw CocoaError(.fileReadUnknown) }
-                    data = loaded
-                }
+                let loader = self.loader
+                guard let data = await Task.detached(priority: .utility, operation: {
+                    await withCheckedContinuation { continuation in
+                        loader.loadImage(source: source) { continuation.resume(returning: $0) }
+                    }
+                }).value else { throw CocoaError(.fileReadUnknown) }
                 struct Decoded: @unchecked Sendable { let image: CGImage }
                 let decoded = try await Task.detached {
                     guard let source = CGImageSourceCreateWithData(data as CFData, nil),

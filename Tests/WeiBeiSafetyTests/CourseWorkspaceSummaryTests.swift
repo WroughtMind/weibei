@@ -18,10 +18,7 @@ final class CourseWorkspaceSummaryTests: XCTestCase {
                 ),
             ],
             relatedCourseIDs: [targetCourseID, otherCourseID],
-            flow: StudyFlowState(
-                phase: .plan,
-                suggestedNext: ["Review the linked note"]
-            )
+            flow: StudyFlowState(phase: .plan)
         )
 
         let highlights = CourseHomeLearningHighlights(
@@ -30,7 +27,7 @@ final class CourseWorkspaceSummaryTests: XCTestCase {
             studySessions: [session]
         )
 
-        // 下一步建议只来自记忆 nextStep 条目；旧 flow.suggestedNext 不再浮出。
+        // 下一步建议来自学习记忆。
         XCTAssertNil(highlights.nextStepText)
         XCTAssertNil(highlights.nextStepSessionID)
 

@@ -114,7 +114,7 @@ final class NativeSkillDisclosureTests: XCTestCase {
     }
 
     private func request() -> StudyAgentRequest {
-        StudyAgentRequest(purpose: .conversation, question: "核对公开统计的口径与时间", materialTitle: "",
+        StudyAgentRequest(question: "核对公开统计的口径与时间", materialTitle: "",
             materialText: "", noteTitle: "", noteText: "", contextRevision: "skill-test")
     }
 

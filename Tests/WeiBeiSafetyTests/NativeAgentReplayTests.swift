@@ -6,7 +6,7 @@ final class NativeAgentReplayTests: XCTestCase {
     private let family = "openai-codex-responses"
 
     private func request(_ question: String = "继续") -> StudyAgentRequest {
-        StudyAgentRequest(purpose: .conversation, question: question, materialTitle: "", materialText: "",
+        StudyAgentRequest(question: question, materialTitle: "", materialText: "",
             noteTitle: "", noteText: "", projectScope: .init(kind: .global, chatID: "replay-test"), contextRevision: "r1")
     }
 

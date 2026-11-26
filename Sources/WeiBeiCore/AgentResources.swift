@@ -16,20 +16,7 @@ public struct AgentResources: Sendable {
 #if targetEnvironment(macCatalyst)
         let resourceBundle = Bundle.main
 #else
-        let bundleName = "WeiBei_WeiBeiCore.bundle"
-        let packagedBundle = Bundle.main.resourceURL
-            .map { $0.appendingPathComponent(bundleName) }
-            .flatMap(Bundle.init(url:))
-        let legacyBundle = Bundle(url: Bundle.main.bundleURL.appendingPathComponent(bundleName))
-        // Inside an assembled .app, touching Bundle.module when both packaged
-        // candidates missed hits the Swift 6.2 accessor's fatalError ("could
-        // not load resource bundle"). Degrade to the thrown error instead.
-        // Bare dev executables keep the accessor — its compiled-in .build
-        // fallback path is valid there by construction.
-        if packagedBundle == nil, legacyBundle == nil, Bundle.main.bundleURL.pathExtension == "app" {
-            throw NativeAgentResourcesError.incomplete(resource: "bundle", cause: "missing")
-        }
-        let resourceBundle = packagedBundle ?? legacyBundle ?? Bundle.module
+        let resourceBundle = Bundle.module
 #endif
         guard let rootURL = resourceBundle.url(forResource: "AgentResources", withExtension: nil) else {
             throw NativeAgentResourcesError.incomplete(resource: "agent_resources", cause: "missing")

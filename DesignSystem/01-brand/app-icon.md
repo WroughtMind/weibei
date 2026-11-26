@@ -4,7 +4,7 @@
 
 原始 Logo 图是 1254 × 1254 的 RGB 图片，米纸已经烘焙进去。它不是 macOS 标准母版，没有透明外框，也没有 16、32 和 64 px 的光学适配。直接缩小后，拓印纹理会变成噪点，朱砂方块在 16 px 里接近消失。
 
-仓库采用 SwiftPM 和手工 `.app` 打包。macOS 27 需要 Icon Composer 图标经 Xcode 编译后的动态资源；只把 PNG、SVG 或 ICNS 放进 Resources，都不能得到新系统的动态外壳。
+魏碑通过 Mac Catalyst 工程编译 App Icon 资源。macOS 27 需要 Icon Composer 图标经 Xcode 编译后的动态资源；只把 PNG、SVG 或 ICNS 放进 Resources，都不能得到新系统的动态外壳。
 
 ## 已交付
 

@@ -1514,7 +1514,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                     default: break
                     }
                 }
-                try expect(LabImages.shared.image(for: "lab-image://landscape") != nil, "图片没有解码成功")
+                try expect(LabImages.shared.image(for: LabFixture.landscapeSource) != nil, "图片没有解码成功")
                 guard blocks.count > 3 else { throw Failure(message: "富内容样本不完整") }
                 guard let diagram = blocks.first(where: { if case .diagram = $0.kind { return true }; return false }) else {
                     throw Failure(message: "没有关系图内容")
@@ -1527,11 +1527,11 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 }
 
 
-                guard let imageIndex = blocks.firstIndex(where: { $0.imageSources.contains("lab-image://landscape") }) else {
+                guard let imageIndex = blocks.firstIndex(where: { $0.imageSources.contains(LabFixture.landscapeSource) }) else {
                     throw Failure(message: "没有实际图片正文")
                 }
                 let imageBlock = blocks[imageIndex]
-                LabImages.shared.remove("lab-image://landscape")
+                LabImages.shared.remove(LabFixture.landscapeSource)
                 store.reset(); imageBlock.width = 0
                 _ = store.measure(imageBlock, width: bodyWidth)
                 let pendingHeight = imageBlock.height
@@ -1551,7 +1551,7 @@ final class ConversationController: UIViewController, UICollectionViewDataSource
                 let afterImage = captureAnchor()
                 try expect(beforeImage != nil && afterImage?.messageID == beforeImage?.messageID && afterImage?.item == beforeImage?.item && abs((afterImage?.offset ?? 0) - (beforeImage?.offset ?? 0)) <= 1,
                            "图片到达使正在阅读的正文跳位")
-                guard let image = LabImages.shared.image(for: "lab-image://landscape") else {
+                guard let image = LabImages.shared.image(for: LabFixture.landscapeSource) else {
                     throw Failure(message: "改宽检查缺少已解码图片")
                 }
                 for width in [min(bodyWidth, image.size.width) / 2, bodyWidth] {

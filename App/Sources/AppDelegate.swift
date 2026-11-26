@@ -58,9 +58,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationBuildKey)
             defaults.removeObject(forKey: WeiBeiUpdateService.pendingInstallationVersionKey)
         }
-        lifecycleObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveWorkspace() }
-        })
+        for notification in [UIApplication.willResignActiveNotification,
+                             UIApplication.didEnterBackgroundNotification] {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(
+                forName: notification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.saveWorkspace() }
+            })
+        }
         return true
     }
 
@@ -112,7 +117,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         fileCommands.append(contentsOf: [
             command(store.ui("打开文稿", "Open Document"), "o", "open"),
-            command(store.ui("打开课程空间", "Open Course Space"), "0", "courses")
+            command(store.ui("打开课程空间", "Open Course Space"), "0", "courses"),
+            plainCommand(store.ui("导出笔记为 PDF…", "Export Note as PDF…"), "export-note-pdf")
         ])
         builder.remove(menu: .newScene)
         builder.insertChild(UIMenu(options: .displayInline, children: fileCommands), atStartOfMenu: .file)
@@ -160,6 +166,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             enabled = true
         } else if Self.workspace.settingsPresented {
             enabled = false
+        } else if value == "export-note-pdf" {
+            enabled = Self.workspace.activeNoteItemID != nil && Self.workspace.notePDFExportRequest == nil
+                && !Self.workspace.courseWorkspacePresented && !Self.workspace.notePickerPresented
         } else if let id = AppShortcutID(rawValue: value) {
             enabled = Self.shortcutIsEnabled(id)
         } else {
@@ -185,6 +194,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         case "new-note": Self.revealWorkspaceThen { store.promptCreateBlankNotebookNote() }
         case "open": Self.revealWorkspaceThen { store.importFilesFromPanel() }
         case "courses": store.presentCourseWorkspace(.hub)
+        case "export-note-pdf":
+            if let itemID = store.activeNoteItemID, store.notePDFExportRequest == nil,
+               !store.courseWorkspacePresented, !store.notePickerPresented {
+                store.notePDFExportRequest = NotePDFExportRequest(itemID: itemID)
+            }
         case "zoom-in", "zoom-in-equals": if let scale = store.interfaceTextScale.nextLarger { store.setInterfaceTextScale(scale) }
         case "zoom-out": if let scale = store.interfaceTextScale.nextSmaller { store.setInterfaceTextScale(scale) }
         case "zoom-reset": store.setInterfaceTextScale(.standard)
@@ -210,14 +224,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                     case .focusChat: store.focus(.agent)
                     case .previousMaterial: store.selectAdjacentItem(step: -1)
                     case .nextMaterial: store.selectAdjacentItem(step: 1)
-                    case .toggleRightPane: store.toggleRightPane()
-                    case .threePaneWorkspace: store.setLayout(.documentAgentNotes)
-                    case .swapThreePaneSecondaryPanes: store.swapThreePaneSecondaryPanes()
-                    case .immersiveReading: store.setLayout(.immersiveReading)
-                    case .immersiveChat: store.setLayout(.immersiveConversation)
-                    case .immersiveWriting: store.setLayout(.immersiveWriting)
                     case .selectionPrompt: store.setAgentSurface(.selectionFloat)
-                    case .hideChatOverlay: store.setAgentSurface(.hidden)
+                    case .hideChatOverlay: store.dismissFloatingSelectionAgent()
                     case .applyAgentAnswerToNote: store.applyLastAgentAnswerToNote()
                     case .replaceNoteSelection: store.replaceSelectionWithLastAgentAnswer()
                     case .applyAgentPatchToEditor: store.applyAgentPatchToEditor()
@@ -256,10 +264,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             return store.canNavigateForward
         case .searchInMaterial:
             return store.canSearchCurrentDocument
-        case .toggleRightPane:
-            return store.layout != .immersiveConversation
-        case .swapThreePaneSecondaryPanes:
-            return store.layout.isDocumentThreePane
         case .applyAgentAnswerToNote, .applyAgentPatchToEditor:
             return store.canApplyAgentAnswer
         case .replaceNoteSelection:
@@ -271,8 +275,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         case .hideChatOverlay:
             return store.agentSurface != .hidden
         case .newConversation, .toggleAppearance, .courseIndex, .focusLibrary, .focusReader,
-             .focusNotes, .focusChat, .previousMaterial, .nextMaterial, .threePaneWorkspace,
-             .immersiveReading, .immersiveChat, .immersiveWriting:
+             .focusNotes, .focusChat, .previousMaterial, .nextMaterial:
             return true
         }
     }
@@ -321,8 +324,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     func saveWorkspace() {
         guard !Self.usesFixture else { return }
         guard saveTask == nil else { return }
-        // A failed save retains its assertion until reactivation. If another
-        // inactive save starts first, retire that assertion before replacing it.
         finishBackgroundSave()
         let attemptID = UUID()
         saveAttemptID = attemptID
@@ -344,39 +345,39 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let store = Self.workspace
             let captured = await store.freshActiveNoteEditorSnapshot()
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
-            guard captured else {
-                if Self.updates.status == .installing, store.allowsUnsavedRelaunch {
-                    finishBackgroundSave(attemptID: attemptID)
-                    return
-                }
-                store.showImportantOperationError(store.ui("笔记最新内容尚未安全保存，请保持窗口打开并重试。", "The latest note is not safely saved. Keep the window open and retry."))
-                reopenAfterSaveFailure(attemptID: attemptID)
-                return
-            }
             await store.flushPendingNotePersistenceAsync(flushWorkspace: false)
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
             let saved = await store.flushPendingWorkspaceSaveAsync()
             guard !Task.isCancelled, saveAttemptID == attemptID else { return }
-            guard saved else {
-                if Self.updates.status == .installing, store.allowsUnsavedRelaunch {
-                    finishBackgroundSave(attemptID: attemptID)
-                    return
+
+            let session = store.noteEditingSession
+            let snapshot = store.latestNoteEditorSnapshot
+            let snapshotMissing = (session.dirty && (!captured || snapshot?.documentID != session.documentID
+                || snapshot?.revision != session.currentRevision))
+                || (!captured && store.blankNoteDraftMaterialID != nil)
+            let approvedRestart = Self.updates.status == .installing && store.allowsUnsavedRelaunch
+            // On Catalyst, UIKit enters the background on Quit. A window's
+            // inactive scene phase can also happen during ordinary interaction.
+            if UIApplication.shared.applicationState == .background,
+               (snapshotMissing || !saved), !approvedRestart {
+                if snapshotMissing {
+                    store.showImportantOperationError(store.ui(
+                        "笔记最新内容尚未安全保存，请保持窗口打开并重试。",
+                        "The latest note is not safely saved. Keep the window open and retry."
+                    ))
                 }
-                reopenAfterSaveFailure(attemptID: attemptID)
+                saveTask = nil
+                UIApplication.shared.requestSceneSessionActivation(UIApplication.shared.openSessions.first,
+                                                                  userActivity: nil, options: nil) { error in
+                    WeiBeiLog.noteRepair.error("code=catalyst_save_reopen_failed reason=\(error.localizedDescription, privacy: .private)")
+                }
+                // Keep the task assertion until the window is active again.
                 return
             }
             finishBackgroundSave(attemptID: attemptID)
         }
     }
 
-    private func reopenAfterSaveFailure(attemptID: UUID) {
-        guard saveAttemptID == attemptID else { return }
-        saveTask = nil
-        UIApplication.shared.requestSceneSessionActivation(UIApplication.shared.openSessions.first, userActivity: nil, options: nil) { error in
-            WeiBeiLog.noteRepair.error("code=catalyst_save_reopen_failed reason=\(error.localizedDescription, privacy: .private)")
-        }
-        // The background assertion ends when the reactivated scene is visible.
-    }
     func sceneBecameActive() {
         if saveTask == nil { finishBackgroundSave() }
         Task { await Self.workspace.reconcileActiveNoteEditorWithBackingFile() }
@@ -529,7 +530,6 @@ private struct CatalystWorkspaceRoot: View {
             .onAppear { store.refreshAppearanceForSystemChange() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { appDelegate.sceneBecameActive() }
-                else { appDelegate.saveWorkspace() }
             }
             .onChange(of: store.customShortcutOverrides) { _, _ in UIMenuSystem.main.setNeedsRebuild() }
             .onChange(of: store.interfaceLanguage) { _, _ in UIMenuSystem.main.setNeedsRebuild() }
